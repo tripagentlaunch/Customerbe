@@ -13,9 +13,12 @@ backend/app/routers/ai_router.py (per-request retrieval) both import this.
 
 import logging
 import os
+from typing import TYPE_CHECKING
 
 from pinecone import Pinecone, ServerlessSpec
-from sentence_transformers import SentenceTransformer
+
+if TYPE_CHECKING:
+    from sentence_transformers import SentenceTransformer
 
 _log = logging.getLogger("vector_store")
 
@@ -67,8 +70,18 @@ class VectorStore:
         # in-process model — no repeated download or reload.
         self._model = None
 
-    def _get_model(self) -> SentenceTransformer:
+    def _get_model(self) -> "SentenceTransformer":
         if self._model is None:
+            # Imported here, not at module scope: sentence-transformers pulls in
+            # torch (and, transitively, several hundred MB of CUDA packages),
+            # which is enough on its own to OOM a 512MB Render instance during
+            # process boot if it's imported eagerly. Deferring the import to
+            # first actual use means `main.py` importing this module (via
+            # ai_router) at startup no longer loads torch into memory — it
+            # only loads the first time a concierge chat request reaches
+            # embedding.
+            from sentence_transformers import SentenceTransformer
+
             _log.info("Loading local embedding model %s (first run downloads it)...", MODEL_NAME)
             self._model = SentenceTransformer(MODEL_NAME)
         return self._model
