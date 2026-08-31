@@ -1,0 +1,10 @@
+fastapi
+uvicorn[standard]
+httpx
+python-dotenv
+python-multipart
+supabase
+postgrest
+anthropic
+pinecone
+sentence-transformers

@@ -1,0 +1,2 @@
+class CommsService:
+    pass
