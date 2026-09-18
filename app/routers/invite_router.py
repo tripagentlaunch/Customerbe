@@ -22,3 +22,11 @@ async def invite_redeem(code: str, details: dict = Body(default={})):
         return invite_service.redeem_invite(code.strip().upper(), details)
     except RuntimeError as exc:
         raise HTTPException(status_code=500, detail=str(exc))
+
+
+@router.post("/{code}/capture")
+async def invite_capture(code: str, payload: dict = Body(default={})):
+    try:
+        return invite_service.capture_details(code.strip().upper(), payload)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=500, detail=str(exc))

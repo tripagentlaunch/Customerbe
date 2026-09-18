@@ -33,6 +33,38 @@ class SessionState:
         # The booking/visa-application draft awaiting the member's explicit
         # "yes" — see concierge_tools.py. None when nothing is pending.
         self.pending_action: dict | None = None
+        # Set once ai_router.py has fired summarize_conversation.py +
+        # chat_enquiry_service.py for this session, so a repeated hand-off
+        # signal (the member says "talk to a human" twice, or keeps
+        # chatting after Aanya's sign-off) never creates a second enquiry
+        # row for the same conversation.
+        self.enquiry_created = False
+        # The enquiries.id row created above (None until enquiry_created is
+        # True). A substantive post-handoff message (aanya_flow.py's
+        # _post_handoff_reply) updates THIS row's detail rather than
+        # creating a second one — see ai_router.py's handling of
+        # FlowResult.enquiry_update.
+        self.enquiry_id: str | None = None
+        # Drives the fixed 6-turn flow (see aanya_flow.py) — which question
+        # comes next and what's already been answered, so a later turn never
+        # re-asks a field the member already gave. "turn0" is the initial
+        # state, awaiting the member's free-text opener; "done" once the
+        # flow has closed and handed off. `fields` accumulates raw answers
+        # (destination, budget_choice, etc.) — free-form values, not
+        # normalized against enquiries.detail's schema (summarize_
+        # conversation.py still does that extraction from `history` itself,
+        # unchanged).
+        self.flow_step = "turn0"
+        self.fields: dict = {}
+        # Loop safety net (aanya_flow.py's `advance`) — tracks consecutive
+        # "unresolved" rejections (a real, substantive message that still
+        # doesn't answer the pending question's shape) FOR THE SAME STEP.
+        # Reset to 0/None the moment anything else happens (a real match,
+        # a genuine tangent, a step change) — this is purely about "has
+        # the member been stuck on this exact question back-to-back,"
+        # never a cross-step or cross-session count.
+        self.unresolved_streak = 0
+        self.unresolved_streak_step: str | None = None
         self.last_seen = time.time()
 
     def add_turn(self, role: str, content: str) -> None:

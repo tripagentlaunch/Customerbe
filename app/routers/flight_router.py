@@ -1,8 +1,9 @@
 import uuid
 
 import httpx
-from fastapi import APIRouter, Body, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Request
 
+from app.models.flight_models import FlightFareFamilyRequest, FlightSearchRequest
 from app.services import flight_service
 
 router = APIRouter(prefix="/api/flight", tags=["flight"])
@@ -32,12 +33,12 @@ async def autosuggest(request: Request):
 
 
 @router.post("/search")
-async def search(request: Request, payload: dict = Body(...)):
+async def search(request: Request, payload: FlightSearchRequest):
     trace_id = _trace_id(request)
-    return await _proxy(flight_service.search(payload, trace_id))
+    return await _proxy(flight_service.search(payload.model_dump(), trace_id))
 
 
 @router.post("/farefamily")
-async def farefamily(request: Request, payload: dict = Body(...)):
+async def farefamily(request: Request, payload: FlightFareFamilyRequest):
     trace_id = _trace_id(request)
-    return await _proxy(flight_service.farefamily(payload, trace_id))
+    return await _proxy(flight_service.farefamily(payload.model_dump(exclude_none=True), trace_id))

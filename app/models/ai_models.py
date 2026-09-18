@@ -66,7 +66,6 @@ class ConciergeChatResponse(BaseModel):
     bubbles: list[str] = Field(default_factory=list)
     cards: list[dict] = Field(default_factory=list)
     note: Optional[str] = None
-    chips: list[str] = Field(default_factory=list)
     handoff: Optional[dict] = None
     demo_confirmation: Optional[dict] = None
     grounded: bool = False

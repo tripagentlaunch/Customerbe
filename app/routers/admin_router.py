@@ -14,23 +14,30 @@ _log = logging.getLogger("hotel_proxy")
 async def invite_customer(payload: dict = Body(...)):
     customer_name = (payload.get("customer_name") or "").strip()
     customer_email = (payload.get("customer_email") or "").strip()
-    if not customer_name or not customer_email:
-        raise HTTPException(status_code=400, detail="customer_name and customer_email are required")
+    # Who this invitation reads as being FROM — the Phase 5 email is written
+    # in a referrer's voice ("X has given you one of theirs"), and
+    # create_invitation_code() has no other way to know who that is for this
+    # (curated) issuance path.
+    referrer_name = (payload.get("referrer_name") or "").strip()
+    if not customer_name or not customer_email or not referrer_name:
+        raise HTTPException(
+            status_code=400, detail="customer_name, customer_email and referrer_name are required"
+        )
 
     try:
-        code = invite_service.create_invitation_code(customer_name)
-    except RuntimeError as exc:
-        raise HTTPException(status_code=500, detail=str(exc))
-
-    try:
-        link = await invite_service.send_invite_email(customer_email, customer_name, code)
+        result = await invite_service.create_invitation_code(customer_name, customer_email, referrer_name)
     except RuntimeError as exc:
         raise HTTPException(status_code=500, detail=str(exc))
     except httpx.HTTPStatusError as exc:
-        _log.error("[INVITE] Resend rejected email for code %s: %s", code, exc.response.text)
+        _log.error("[INVITE] Resend rejected email for %s: %s", customer_email, exc.response.text)
         raise HTTPException(status_code=502, detail=f"Resend error: {exc.response.text}")
     except httpx.RequestError as exc:
-        _log.error("[INVITE] Resend request failed for code %s: %s", code, exc)
+        _log.error("[INVITE] Resend request failed for %s: %s", customer_email, exc)
         raise HTTPException(status_code=502, detail=str(exc))
 
-    return {"code": code, "link": link, "email_sent_to": customer_email}
+    return {
+        "code": result["code"],
+        "link": result["link"],
+        "expires_at": result["expires_at"],
+        "email_sent_to": customer_email,
+    }

@@ -132,7 +132,25 @@ def _is_affirmative(message: str) -> bool:
     return bool(_AFFIRM_RE.search(text))
 
 
-TOOL_DEFINITIONS = [
+# PHASE SCOPE (2026-09-02): this deployment phase is pure information-
+# gathering — Aanya collects trip requirements for a human advisor to build
+# a proposal from, and must not search, quote, check, or draft-book
+# anything live. Every tool definition below is untouched and still fully
+# wired to its executor in execute_tool() — only _ENABLED_TOOLS gates what
+# actually reaches Claude via TOOL_DEFINITIONS. Flip an entry to True (and
+# update SYSTEM_PROMPT in claude_client.py to actually instruct her to use
+# it again) to re-enable a tool for a later phase; nothing else in this
+# file needs to change to do that.
+_ENABLED_TOOLS = {
+    "search_flights": False,
+    "search_hotels": False,
+    "check_visa_requirement": False,
+    "request_flight_booking": False,
+    "request_hotel_booking": False,
+    "request_visa_application": False,
+}
+
+_ALL_TOOL_DEFINITIONS = [
     {
         "name": "search_flights",
         "description": (
@@ -297,6 +315,8 @@ TOOL_DEFINITIONS = [
         },
     },
 ]
+
+TOOL_DEFINITIONS = [t for t in _ALL_TOOL_DEFINITIONS if _ENABLED_TOOLS.get(t["name"], True)]
 
 
 def _validation_detail(exc: ValidationError) -> str:

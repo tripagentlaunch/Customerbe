@@ -1,5 +1,7 @@
+import asyncio
 import json
 import logging
+import time
 
 import httpx
 
@@ -29,18 +31,119 @@ def _url(path: str) -> str:
     return f"{settings.tripsure_base_url}{path}"
 
 
+# Ported from tripagent-full/backend/app/services/hotel_service.py, adapted to
+# this file's async httpx.AsyncClient calls. Proven fix (2026-09-01) for
+# TripSure's preprod server returning a genuine HTTP 500 body
+# ({"error":"An internal error occurred. Please try again later."}) on a
+# meaningful fraction of otherwise-valid requests, alongside its own AWS API
+# Gateway occasionally 504-ing on slow upstream calls — both transient and
+# both worth one retry. Deliberately only wraps idempotent reads
+# (autosuggest/listing/details/price_check); book_room()/create_itinerary()/
+# cancel_booking() mutate state on TripSure's side and must never be retried.
+_RETRYABLE_STATUS = {500, 502, 503, 504}
+_RETRY_ATTEMPTS = 3
+_RETRY_DELAY_SECONDS = 0.5
+
+
+async def _with_retry(make_request, *, label: str) -> httpx.Response:
+    last_exc: httpx.TransportError | None = None
+    response: httpx.Response | None = None
+    for attempt in range(1, _RETRY_ATTEMPTS + 1):
+        try:
+            response = await make_request()
+        except httpx.TransportError as exc:
+            last_exc = exc
+            response = None
+            _log.warning(
+                "[HOTEL_RETRY] %s attempt %s/%s: transport error %s: %s",
+                label, attempt, _RETRY_ATTEMPTS, type(exc).__name__, exc,
+            )
+            if attempt < _RETRY_ATTEMPTS:
+                await asyncio.sleep(_RETRY_DELAY_SECONDS)
+            continue
+
+        if response.status_code not in _RETRYABLE_STATUS:
+            return response
+        _log.warning(
+            "[HOTEL_RETRY] %s attempt %s/%s: HTTP %s body=%r",
+            label, attempt, _RETRY_ATTEMPTS, response.status_code, response.text[:500],
+        )
+        if attempt < _RETRY_ATTEMPTS:
+            await asyncio.sleep(_RETRY_DELAY_SECONDS)
+
+    if response is not None:
+        return response
+    raise last_exc
+
+
 async def autosuggest(params: dict, trace_id: str) -> dict:
     async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
-        resp = await client.get(_url("/api/hotel/locations/autosuggest"), params=params, headers=_headers(trace_id))
+        resp = await _with_retry(
+            lambda: client.get(_url("/api/hotel/locations/autosuggest"), params=params, headers=_headers(trace_id)),
+            label="autosuggest",
+        )
         resp.raise_for_status()
         return resp.json()
+
+
+# In-process, in-memory cache for listing() only — ported from
+# tripagent-full's hotel_service.py, which found this to be the one lever
+# that actually helps: TripSure's own fetchFromCache flag has no observed
+# effect (confirmed there by firing the identical payload twice and seeing
+# the same slow/failure spread both times), so this skips calling TripSure
+# at all on a repeat of the SAME search instead.
+#
+# IN-PROCESS ONLY: a plain module-level dict, not Redis or any shared store.
+# Resets on every backend restart; if this backend ever scales to multiple
+# instances, each instance keeps its own independent cache. Both acceptable
+# for a single-instance deployment today.
+#
+# Deliberately NOT applied to details()/price_check() — those re-verify live
+# pricing right before a commitment, so staleness is only acceptable for
+# listing()'s browse-time data.
+_LISTING_CACHE: dict = {}
+_LISTING_CACHE_TTL_SECONDS = 180
+
+
+def _listing_cache_key(payload: dict) -> tuple:
+    loc = payload.get("locationSuggestion") or {}
+    rooms = tuple(
+        (r.get("numberOfAdults"), r.get("numberOfChildren"), r.get("childrenAge")) for r in payload.get("rooms") or []
+    )
+    return (
+        loc.get("id"),
+        str(payload.get("city", "")).strip().lower(),
+        payload.get("checkIn"),
+        payload.get("checkOut"),
+        rooms,
+        payload.get("currency"),
+        payload.get("nationalityCode"),
+    )
 
 
 async def listing(payload: dict, trace_id: str) -> dict:
+    cache_key = _listing_cache_key(payload)
+    now = time.time()
+    cached = _LISTING_CACHE.get(cache_key)
+
+    if cached is not None and cached[0] > now:
+        _log.info("[HOTEL_CACHE] listing cache HIT for %r (%ds left) — skipping TripSure", cache_key, cached[0] - now)
+        return cached[1]
+
+    if cached is not None:
+        del _LISTING_CACHE[cache_key]  # expired — evict rather than let the dict grow unbounded
+    _log.info("[HOTEL_CACHE] listing cache MISS for %r", cache_key)
+
     async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
-        resp = await client.post(_url("/api/hotel/listing"), json=payload, headers=_headers(trace_id))
+        resp = await _with_retry(
+            lambda: client.post(_url("/api/hotel/listing"), json=payload, headers=_headers(trace_id)),
+            label="listing",
+        )
         resp.raise_for_status()
-        return resp.json()
+        result = resp.json()
+
+    _LISTING_CACHE[cache_key] = (now + _LISTING_CACHE_TTL_SECONDS, result)
+    return result
 
 
 async def details(payload: dict, trace_id: str) -> dict:
@@ -48,7 +151,10 @@ async def details(payload: dict, trace_id: str) -> dict:
     # full outgoing body + raw upstream response, not just the wrapped error.
     _log.info("DEBUG -> POST /api/hotel/details trace_id=%s body=%s", trace_id, json.dumps(payload))
     async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
-        resp = await client.post(_url("/api/hotel/details"), json=payload, headers=_headers(trace_id))
+        resp = await _with_retry(
+            lambda: client.post(_url("/api/hotel/details"), json=payload, headers=_headers(trace_id)),
+            label="details",
+        )
         _log.info("DEBUG <- /api/hotel/details trace_id=%s status=%s body=%s", trace_id, resp.status_code, resp.text)
         resp.raise_for_status()
         return resp.json()
@@ -59,7 +165,10 @@ async def price_check(payload: dict, trace_id: str) -> dict:
     # full outgoing body + raw upstream response, not just the wrapped error.
     _log.info("DEBUG -> POST /api/hotel/priceCheck trace_id=%s body=%s", trace_id, json.dumps(payload))
     async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
-        resp = await client.post(_url("/api/hotel/priceCheck"), json=payload, headers=_headers(trace_id))
+        resp = await _with_retry(
+            lambda: client.post(_url("/api/hotel/priceCheck"), json=payload, headers=_headers(trace_id)),
+            label="price_check",
+        )
         _log.info("DEBUG <- /api/hotel/priceCheck trace_id=%s status=%s body=%s", trace_id, resp.status_code, resp.text)
         resp.raise_for_status()
         return resp.json()
@@ -199,3 +308,36 @@ def record_cancellation(partner_reference_id: str) -> None:
         ).execute()
     except Exception as exc:  # noqa: BLE001 - best-effort mirror, must not fail the cancellation response
         _log.error("[HOTEL_ORDER_MIRROR] record_cancellation failed for ref %s: %s: %s", partner_reference_id, type(exc).__name__, exc)
+
+
+def get_snapshot(hotel_key: str) -> dict | None:
+    """Reads one hotel_snapshots row for the public GET /api/hotel/public/
+    {hotel_key} route — the landing page a hotel name/photo in a Proposal
+    PDF (TRIPAGENT-FE's Proposal Composer) links to. Display-only fields
+    (name/city/address/stars/chain_name/image/images/facilities); no price/
+    rate is ever stored there. This SAME Supabase project already has the
+    table — hotel_snapshots was created by TRIPAGENT-FE's admin-panel
+    backend (tripagent-full/backend, db/148_hotel_snapshots.sql) and is kept
+    fresh by ITS hotel_service.listing() (both the advisor Search panel and
+    itinerary-generation real-hotel search there upsert into it); this repo
+    never writes to it, only reads — no migration needed here, confirmed
+    both backends' SUPABASE_URL point at the same project ref
+    (gnifmusartvwngcuquou), same as this file's own record_booking()/
+    record_cancellation() mirror tables. None on a missing client (mirrors
+    those two functions' own defensive check) or any read failure/unknown
+    hotelKey — the router turns that into a 404, never a 500."""
+    client = get_supabase_admin_client()
+    if client is None:
+        return None
+    try:
+        return (
+            client.table("hotel_snapshots")
+            .select("*")
+            .eq("hotel_key", str(hotel_key))
+            .maybe_single()
+            .execute()
+            .data
+        )
+    except Exception as exc:  # noqa: BLE001 - never break the request over a read hiccup; router treats None as 404
+        _log.error("[HOTEL_SNAPSHOT] get_snapshot failed for %s: %s: %s", hotel_key, type(exc).__name__, exc)
+        return None
