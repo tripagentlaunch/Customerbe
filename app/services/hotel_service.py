@@ -310,6 +310,37 @@ def record_cancellation(partner_reference_id: str) -> None:
         _log.error("[HOTEL_ORDER_MIRROR] record_cancellation failed for ref %s: %s: %s", partner_reference_id, type(exc).__name__, exc)
 
 
+def find_photo_by_name(name: str) -> str | None:
+    """Backs GET /api/hotel/photo-lookup?name=X. Looks up a real TripSure
+    photo by hotel name against hotel_snapshots — the same table
+    get_snapshot() reads (see its docstring: populated by TRIPAGENT-FE's
+    hotel_service.listing() upserts, this repo only reads it). A live
+    TripSure inventory search isn't usable here since /api/hotel/listing
+    requires a location + date range, not just a name, so a case-
+    insensitive name match against the already-synced snapshot table is
+    the practical way to "search TripSure's inventory" for one. Returns
+    the real image URL on a match with a non-null image, else None
+    (no match, or matched but TripSure never gave that hotel a photo)."""
+    client = get_supabase_admin_client()
+    if client is None:
+        return None
+    try:
+        row = (
+            client.table("hotel_snapshots")
+            .select("image")
+            .ilike("name", name.strip())
+            .not_.is_("image", "null")
+            .limit(1)
+            .maybe_single()
+            .execute()
+            .data
+        )
+        return row.get("image") if row else None
+    except Exception as exc:  # noqa: BLE001 - never break the request over a read hiccup; router treats None as "not found"
+        _log.error("[HOTEL_PHOTO_LOOKUP] find_photo_by_name failed for %r: %s: %s", name, type(exc).__name__, exc)
+        return None
+
+
 def get_snapshot(hotel_key: str) -> dict | None:
     """Reads one hotel_snapshots row for the public GET /api/hotel/public/
     {hotel_key} route — the landing page a hotel name/photo in a Proposal

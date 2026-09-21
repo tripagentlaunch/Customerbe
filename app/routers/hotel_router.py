@@ -73,6 +73,11 @@ async def book_room(payload: HotelBookRoomRequest):
     return result
 
 
+@router.get("/photo-lookup")
+async def photo_lookup(name: str):
+    return {"photoUrl": hotel_service.find_photo_by_name(name)}
+
+
 @router.get("/public/{hotel_key}")
 async def get_hotel_public(hotel_key: str):
     """The customer-site landing page for a hotel name/photo clicked in a
