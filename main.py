@@ -15,6 +15,7 @@ from app.routers.ai_router_v6 import router as ai_router_v6
 from app.routers.enquiry_router import router as enquiry_router
 from app.routers.flight_router import router as flight_router
 from app.routers.hotel_router import router as hotel_router
+from app.routers.hotel_results_router import router as hotel_results_router
 from app.routers.invite_router import router as invite_router
 from app.internal.internal_router import router as internal_router
 from app.routers.whatsapp_router_v6 import router as whatsapp_router_v6
@@ -81,6 +82,7 @@ else:
     )
 
 app.include_router(hotel_router)
+app.include_router(hotel_results_router)
 app.include_router(flight_router)
 app.include_router(admin_router)
 app.include_router(access_request_router)

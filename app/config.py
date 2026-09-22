@@ -116,6 +116,20 @@ class Settings:
             else "https://tripagent-site-orpin.vercel.app"
         )
 
+        # Base URL for links the BACKEND itself serves (e.g. the hotel
+        # results page at /hotel-results/{id}) — distinct from
+        # site_base_url above, which is the separate static frontend.
+        # Same fails-closed shape: dev defaults to this backend's own
+        # localhost:8000 (what concierge-v5.html already points at);
+        # production has no hardcoded guess — it's unset unless an
+        # operator explicitly provides the real deployed backend URL, so
+        # a chat reply never ships a link to an unverified/guessed host.
+        self.backend_base_url = (
+            (os.environ.get("BACKEND_BASE_URL", "").strip() or "http://localhost:8000")
+            if self.is_local_dev
+            else os.environ.get("BACKEND_BASE_URL", "").strip()
+        )
+
     @property
     def headers(self) -> dict:
         return {

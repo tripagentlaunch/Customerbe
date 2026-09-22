@@ -83,9 +83,11 @@ independent state even if a tab reuses the same session_id across pages.
 
 import logging
 import re
+import uuid
 from datetime import date
 
-from app.services import chat_enquiry_service
+from app.config import settings
+from app.services import chat_enquiry_service, concierge_tools, hotel_results_page
 from app.services.aanya_flow import (
     _already_passed_date,
     _date_past_clarify_prompt,
@@ -93,6 +95,7 @@ from app.services.aanya_flow import (
     _get_client,
     _month_number_from_text,
 )
+from app.models.concierge_models import FlightSearchIntent, HotelSearchIntent
 from app.services.session_store import SessionState
 from app.services.summarize_conversation import normalize_preference
 
@@ -236,6 +239,75 @@ FIELD_QUESTION_HINTS = {
     "visa_context": "their passport nationality (needed for visa guidance)",
     "_child_ages_if_needed": "the children's ages (needed for accurate fare/eligibility, now that children are part of the party)",
 }
+
+
+# Progressive-questioning tiers (Instinct-style staged flow, not a
+# checklist dump). Only flight/hotel fields are tiered — everything else
+# (discovery/visa/etc.) keeps the plain single-field "ask" behavior it
+# already had, since this fix is scoped to flight/hotel intents.
+# Tier 1 = the basic what/when/who, asked together as ONE natural
+# question the first time. Tier 2/3 = the remaining details, asked
+# progressively (1-2 related fields per turn) on later turns once tier 1
+# is settled.
+_FIELD_TIER = {
+    # flight
+    "origin": 1, "destination": 1, "start_date": 1, "travellers": 1,
+    "_infant_count_known": 1, "_child_ages_if_needed": 1,
+    "trip_type": 2, "_return_date_if_round_trip": 2,
+    "cabin_class": 3, "direct_stops_pref": 3, "airline_pref": 3,
+    # hotel
+    "end_date": 1, "room_count": 1,
+    "hotel_area": 2, "star_rating_pref": 2, "budget_amount": 2,
+}
+
+# Phrases that mean the customer explicitly wants everything listed at
+# once ("just tell me what you need") — the ONLY case that's allowed to
+# name more than a tier's worth of fields in one message, and even then
+# as one short natural sentence, never a formal bulleted checklist.
+_BULK_REQUEST_PATTERN = re.compile(
+    r"(just tell me|tell me everything|what do you need|what(?:'s| is) needed|"
+    r"list (?:everything|what) you need|ask me everything)",
+    re.IGNORECASE,
+)
+
+# The exact fixed-format opener for a genuinely fresh flight-booking
+# request (Instinct's own intro-line + bullet-list style) — used ONLY for
+# this one specific case (see _is_fresh_flight_opener), never generated
+# by the model, so the wording/format is guaranteed exact rather than
+# left to paraphrasing.
+_FLIGHT_FRESH_OPENER = (
+    "Got it, send me your flight trip details here\n\n"
+    "From city\n"
+    "Destination\n"
+    "Travel date or dates\n"
+    "One way or return\n"
+    "Number of travellers"
+)
+
+
+def _lowest_tier_fields(missing_fields: list[str]) -> list[str]:
+    """The subset of missing_fields in the lowest (earliest) tier still
+    outstanding — same staging _mode_instruction's 'ask' branch uses."""
+    if not missing_fields:
+        return []
+    lowest_tier = min(_FIELD_TIER.get(f, 1) for f in missing_fields)
+    return [f for f in missing_fields if _FIELD_TIER.get(f, 1) == lowest_tier]
+
+
+_FLIGHT_TIER1_CORE = {"origin", "destination", "start_date", "travellers"}
+
+
+def _is_fresh_flight_opener(missing_fields: list[str], active_intents: list[str], bulk_request: bool) -> bool:
+    """True only for a genuinely fresh flight-booking ask: flight is the
+    only active intent, nothing about who/when/where is known yet (all
+    four tier-1 core fields are still missing), and the customer hasn't
+    invoked the bulk-request escape hatch. False the moment ANY tier-1
+    field is already known (context-reuse case) or another intent (e.g.
+    hotel) is also active — those keep the natural-sentence behavior."""
+    if bulk_request or active_intents != ["flight_interest"]:
+        return False
+    this_turn = set(_lowest_tier_fields(missing_fields))
+    return _FLIGHT_TIER1_CORE.issubset(this_turn)
 
 
 def _field_meta(value, source: str, confidence: float, stale: bool = False) -> dict:
@@ -519,8 +591,12 @@ TripAgent — not a questionnaire. Remember the conversation, ask only what's ne
 questions first, and move the trip forward.
 
 CORE CONVERSATION RULES:
-- Ask only the next required question — normally one primary question per turn (occasionally two \
-closely related ones, e.g. "direct only, or any airline you prefer?", never a checklist dump).
+- Ask only what's actually still needed, progressively — like a real consultant building up the \
+picture over a few turns, never a form/checklist dump. Right after the customer first asks to book \
+a flight or hotel, ask for the basic what/when/who together as ONE natural sentence (never a bulleted \
+list), then ask the remaining details (one-way/return, stops, cabin, airline, area, budget, etc.) a \
+couple at a time on the turns that follow. If something was already said or implied earlier in the \
+conversation, state it naturally and ask only to confirm/override it — never re-ask it as blank.
 - Never ask again for information already known, unless it's ambiguous, stale, or has changed.
 - Capture every useful fact when the customer gives multiple facts in one message.
 - Normal replies should generally be 1-2 short WhatsApp lines.
@@ -633,7 +709,10 @@ def _profile_summary(profile: dict) -> str:
     return "\n".join(lines) if lines else "(nothing known yet — this is the customer's first message)"
 
 
-def _mode_instruction(mode: str, target_field: str | None, reason: str | None, intent: str, active_intents: list[str]) -> str:
+def _mode_instruction(
+    mode: str, target_field: str | None, reason: str | None, intent: str, active_intents: list[str],
+    missing_fields: list[str] | None = None, bulk_request: bool = False,
+) -> str:
     if mode == "clarify_invalid":
         return (
             f"The merged trip information has a problem: {reason}. Point this out naturally and "
@@ -648,6 +727,47 @@ def _mode_instruction(mode: str, target_field: str | None, reason: str | None, i
                 "suited to whatever's known so far, and ask exactly the next single most useful "
                 "question."
             )
+        missing_fields = missing_fields or [target_field]
+
+        if bulk_request:
+            # The customer explicitly asked for everything at once — the
+            # only case allowed to name more than one tier. Still ONE
+            # natural sentence, never a formal bulleted checklist.
+            hints = [FIELD_QUESTION_HINTS.get(f, f) for f in missing_fields]
+            return (
+                "The customer explicitly asked you to just tell them everything you need — so, "
+                "and ONLY because they asked for that, name everything still missing in ONE natural, "
+                f"conversational sentence (not a bulleted list, not a formal checklist): {', '.join(hints)}."
+            )
+
+        if len(missing_fields) > 1:
+            # Progressive, staged questioning (Instinct-style), never a
+            # checklist dump: ask only the fields in the LOWEST tier still
+            # missing, together as one natural sentence — the rest come on
+            # later turns as the conversation moves forward.
+            lowest_tier = min(_FIELD_TIER.get(f, 1) for f in missing_fields)
+            this_turn = [f for f in missing_fields if _FIELD_TIER.get(f, 1) == lowest_tier]
+            if len(this_turn) == 1:
+                hint = FIELD_QUESTION_HINTS.get(this_turn[0], this_turn[0])
+                return (
+                    f"Exactly one piece of information is still needed to move forward right now: "
+                    f"{hint}. Ask ONLY that, as a natural single question — do not ask about "
+                    f"anything else this turn, including the other things still missing overall "
+                    f"({', '.join(FIELD_QUESTION_HINTS.get(f, f) for f in missing_fields if f not in this_turn)}) "
+                    f"— those come later, once this is answered."
+                )
+            hints = [FIELD_QUESTION_HINTS.get(f, f) for f in this_turn]
+            return (
+                "Ask ONLY for these closely-related things together, phrased as ONE natural "
+                f"conversational question or sentence — never a bulleted list or formal checklist: "
+                f"{', '.join(hints)}. If any of these were already stated or implied earlier in the "
+                "conversation, state that known value naturally and only ask them to confirm or "
+                "override it, rather than asking for it as if it were blank. Do not ask about "
+                "anything beyond these — everything else still missing overall "
+                f"({', '.join(FIELD_QUESTION_HINTS.get(f, f) for f in missing_fields if f not in this_turn) or 'nothing else'}) "
+                "comes later, progressively, over the following turns — never all at once."
+            )
+
         return (
             f"Exactly one piece of information is still needed to move forward: {hint}. Ask "
             f"ONLY that, as the next useful question — do not ask about anything else this turn, "
@@ -690,6 +810,19 @@ def _mode_instruction(mode: str, target_field: str | None, reason: str | None, i
             "react or choose. Do NOT ask any further profile question." + scope_note + " Recommend "
             "PLACES, not prices — do not mention any flight/hotel price figure here, and do not "
             "comment on whether the budget fits."
+        )
+    if mode == "present_results":
+        return (
+            "Live TripSure search has just run for this request. The LIVE RESULTS block given to "
+            "you separately is the ONLY source of truth for any price/airline/hotel name/time — "
+            "never add or invent anything beyond it. Present 2-3 of the real options briefly, then "
+            "say plainly, in one short natural line, which one best matches what the customer "
+            "actually asked for (cheapest, a stated time/airline/area/rating preference, or the "
+            "cheapest by default if they gave no preference) — grounded only in the data given, "
+            "never a made-up 'perfect match' claim the data doesn't support. Ask them to confirm "
+            "which one to go with, or which to adjust. If the block says no options were returned, "
+            "say so plainly and offer their advisor pulling options directly instead of guessing. "
+            "Do not mention or imply a booking link exists — there isn't one in this chat."
         )
     if mode == "closing":
         return (
@@ -738,21 +871,25 @@ def _analyze_system_prompt(profile: dict, today: date) -> str:
 def _reply_system_prompt(
     profile: dict, intent: str, mode: str, target_field: str | None,
     reason: str | None, direct_question: bool, today: date, active_intents: list[str],
+    missing_fields: list[str] | None = None, live_results_block: str | None = None,
+    bulk_request: bool = False,
 ) -> str:
     today_str = today.strftime("%A, %d %B %Y")
-    instruction = _mode_instruction(mode, target_field, reason, intent, active_intents)
+    instruction = _mode_instruction(mode, target_field, reason, intent, active_intents, missing_fields, bulk_request)
     dq = (
         "\nThe customer's latest message also contains a direct, answerable question. Answer it "
         "for real first, with genuine specific knowledge, before doing anything else in this "
         "reply — never defer it to \"later.\""
         if direct_question else ""
     )
+    results_section = f"\n\n{live_results_block}" if live_results_block else ""
     return (
         f"{_MASTER_SYSTEM_PROMPT}\n\n"
         f"{_SCOPE_NOTE}\n\n"
         f"Today's date is {today_str}.\n\n"
         f"TRIP PROFILE — current state, source-tagged:\n{_profile_summary(profile)}\n\n"
-        f"WHAT TO DO THIS TURN (already decided — detected intent = {intent}): {instruction}{dq}\n\n"
+        f"WHAT TO DO THIS TURN (already decided — detected intent = {intent}): {instruction}{dq}"
+        f"{results_section}\n\n"
         "Write ONLY the customer-facing reply, in Anaya's voice, following the style above. Call "
         "compose_reply exactly once."
     )
@@ -855,6 +992,11 @@ def merge_and_resolve(profile: dict, engine_state: dict, diff: dict, explicit_co
                     if dep in profile:
                         profile[dep]["stale"] = True
                 engine_state["has_recommended"] = False
+                engine_state["results_fetched"] = False
+                engine_state["live_results"] = None
+            if field in ("start_date", "end_date", "return_date", "trip_type", "travellers", "children_count", "cabin_class"):
+                engine_state["results_fetched"] = False
+                engine_state["live_results"] = None
             if field == "travellers":
                 budget_meta = profile.get("budget_amount")
                 per_person = _get_value(profile, "budget_per_person")
@@ -989,9 +1131,18 @@ def _as_second_person(hint: str) -> str:
     return hint
 
 
-def _safe_ask_reply(mode: str, target_field: str | None, reason: str | None) -> str:
+def _safe_ask_reply(mode: str, target_field: str | None, reason: str | None, missing_fields: list[str] | None = None) -> str:
     if mode == "clarify_invalid" and reason:
         return f"Quick check — {reason}. Could you confirm the correct value?"
+    missing_fields = missing_fields or ([target_field] if target_field else [])
+    if len(missing_fields) > 1:
+        # Same progressive-tier rule as _mode_instruction's "ask" branch:
+        # only the lowest still-missing tier this turn, one natural
+        # sentence, never a bulleted checklist of everything.
+        lowest_tier = min(_FIELD_TIER.get(f, 1) for f in missing_fields)
+        this_turn = [f for f in missing_fields if _FIELD_TIER.get(f, 1) == lowest_tier]
+        hints = [_as_second_person(FIELD_QUESTION_HINTS.get(f, f)) for f in this_turn]
+        return f"Just a couple more things before I can move forward — could you let me know {', '.join(hints)}?"
     hint = FIELD_QUESTION_HINTS.get(target_field, target_field or "a couple more details")
     return f"Just one more thing before I can move forward — could you let me know {_as_second_person(hint)}?"
 
@@ -1062,6 +1213,180 @@ def missing_required_fields(profile: dict, required: list[str]) -> tuple[list[st
         elif meta.get("stale"):
             stale.append(field)
     return missing, stale
+
+
+# ---------------------------------------------------------------------------
+# Live TripSure search — reuses concierge_tools._search_flights/_search_hotels
+# (the existing, already-tested read-only wrappers around flight_service.py/
+# hotel_service.py) rather than re-deriving TripSure payload/envelope logic.
+# No booking/itinerary-create call is made here (concierge_tools itself never
+# calls hotel_service.create_itinerary/.price_check/.book_room — a deliberate
+# money-safety boundary pending Amit's sign-off, unchanged by this file).
+# ---------------------------------------------------------------------------
+
+async def _fetch_live_results(profile: dict, active_intents: list[str]) -> tuple[dict, str | None]:
+    """Runs a live TripSure search for every service intent that's actually
+    active and ready. Returns (results, error) where results holds
+    normalized FlightOption/HotelOption dicts only — never fabricated data.
+    A per-service failure is caught and reported as `error` text; the other
+    service's results (if any) are still returned."""
+    results: dict = {}
+    error = None
+    trace_id = str(uuid.uuid4())
+
+    if "flight_interest" in active_intents:
+        try:
+            trip_type = _get_value(profile, "trip_type")
+            return_date = _get_value(profile, "return_date")
+            if not return_date and trip_type == "round_trip":
+                return_date = _get_value(profile, "end_date")
+            intent = FlightSearchIntent(
+                origin=_get_value(profile, "origin") or "",
+                destination=_get_value(profile, "destination") or "",
+                departure_date=_get_value(profile, "start_date") or "",
+                return_date=return_date,
+                adults=_get_value(profile, "travellers") or 1,
+                children=_get_value(profile, "children_count") or 0,
+                cabin_class=(_get_value(profile, "cabin_class") or "Economy").upper(),
+            )
+            flight_result = await concierge_tools._search_flights(intent)
+            if flight_result.note is not None:
+                # concierge_tools._search_flights substitutes hardcoded
+                # sample fares (_demo_flight_fallback) when DEMO_MODE is on
+                # and the live TripSure call either failed or returned an
+                # unrecognized shape — flagged via `note`. That's fine for
+                # its original caller (a Claude tool-loop told explicitly
+                # it's sample data), but v5 tells the customer these are
+                # real, current TripSure results — so synthetic data must
+                # never reach that path. Treat it exactly like a failure.
+                _log.warning("[AANYA_FLOW_V5] flight search returned fallback/demo data, not live — discarding: %s", flight_result.note)
+                results["flights"] = []
+                error = "flight search is temporarily unavailable"
+            else:
+                results["flights"] = [c.model_dump() for c in flight_result.cards]
+                if not flight_result.cards and flight_result.error:
+                    error = flight_result.error
+        except Exception as exc:  # noqa: BLE001 - upstream TripSure failure -> honest fallback, never fabricate
+            _log.error("[AANYA_FLOW_V5] live flight search failed: %s: %s", type(exc).__name__, exc)
+            results["flights"] = []
+            error = "flight search is temporarily unavailable"
+
+    if "hotel_interest" in active_intents:
+        try:
+            intent = HotelSearchIntent(
+                destination=_get_value(profile, "destination") or "",
+                check_in=_get_value(profile, "start_date") or "",
+                check_out=_get_value(profile, "end_date") or "",
+                adults=_get_value(profile, "travellers") or 2,
+                children=_get_value(profile, "children_count") or 0,
+            )
+            hotel_result = await concierge_tools._search_hotels(intent)
+            if hotel_result.note is not None:
+                # Same guard as the flight branch above — a `note` on the
+                # result means concierge_tools is telling its normal
+                # (Claude tool-loop) caller these aren't a clean live
+                # result; v5 must never present that as real either.
+                _log.warning("[AANYA_FLOW_V5] hotel search returned fallback/non-live data — discarding: %s", hotel_result.note)
+                results["hotels"] = []
+                error = "hotel search is temporarily unavailable"
+            else:
+                results["hotels"] = [c.model_dump() for c in hotel_result.cards]
+                if not hotel_result.cards and hotel_result.error:
+                    error = hotel_result.error
+                elif hotel_result.hotels:
+                    # Genuine (note is None) result with real cards — build
+                    # the results page from the RAW TripSure excerpt (has
+                    # lat/lng/address the stripped-down cards don't), keyed
+                    # by a short id so the chat reply carries only a link,
+                    # never the raw payload. Filters are the customer's own
+                    # already-known values, used only to phrase "why this
+                    # matches" on the page — never invented.
+                    check_in = intent.check_in
+                    check_out = intent.check_out
+                    ci, co = _parse_date_safe(check_in), _parse_date_safe(check_out)
+                    nights = (co - ci).days if ci and co and (co - ci).days > 0 else None
+                    results["hotel_results_id"] = hotel_results_page.store_results(
+                        hotel_result.hotels,
+                        {
+                            "destination": intent.destination,
+                            "check_in": check_in,
+                            "check_out": check_out,
+                            "nights": nights,
+                            "star_rating_pref": _get_value(profile, "star_rating_pref"),
+                            "budget_amount": _get_value(profile, "budget_amount"),
+                            "hotel_area": _get_value(profile, "hotel_area"),
+                        },
+                    )
+        except Exception as exc:  # noqa: BLE001 - upstream TripSure failure -> honest fallback, never fabricate
+            _log.error("[AANYA_FLOW_V5] live hotel search failed: %s: %s", type(exc).__name__, exc)
+            results["hotels"] = []
+            error = "hotel search is temporarily unavailable"
+
+    return results, error
+
+
+def _format_live_results_block(live_results: dict) -> str:
+    """Renders already-fetched, real TripSure cards as plain facts for the
+    reply prompt — Claude is told these are the ONLY facts it may use, so
+    it cannot invent a price/airline/hotel name beyond what's here. No
+    flight booking/deeplink URL is included: this codebase has no TripSure
+    flight-booking-link field anywhere (verified — flight search responses
+    carry only internal ids), so none is fabricated here either; the human
+    advisor shares the actual booking link/next step after hand-off. A real
+    hotel results page IS available when live_results["hotel_results_id"]
+    is set (see advance()) — its link is appended to the reply AFTER
+    compose_reply, in Python, never written by the model itself, so the
+    URL is always exactly correct."""
+    flights = live_results.get("flights") or []
+    hotels = live_results.get("hotels") or []
+    lines = []
+
+    if flights:
+        priced = [f for f in flights if f.get("price_inr") is not None]
+        cheapest = min(priced, key=lambda f: f["price_inr"]) if priced else None
+        lines.append("LIVE FLIGHT OPTIONS (real TripSure data — use ONLY these facts, never invent):")
+        for f in flights[:3]:
+            tag = " [CHEAPEST]" if cheapest is not None and f is cheapest else ""
+            lines.append(
+                f"- {f.get('airline') or 'Airline not specified'} {f.get('flight_number') or ''} — "
+                f"price: {f.get('price_inr') if f.get('price_inr') is not None else 'not returned'} INR, "
+                f"departs: {f.get('departure_time') or 'not returned'}, "
+                f"stops: {f.get('stops') if f.get('stops') is not None else 'not returned'}, "
+                f"duration: {f.get('duration') or 'not returned'}{tag}"
+            )
+
+    if hotels:
+        priced = [h for h in hotels if h.get("price_inr") is not None]
+        cheapest = min(priced, key=lambda h: h["price_inr"]) if priced else None
+        lines.append("LIVE HOTEL OPTIONS (real TripSure data — use ONLY these facts, never invent):")
+        for h in hotels[:3]:
+            tag = " [CHEAPEST]" if cheapest is not None and h is cheapest else ""
+            lines.append(
+                f"- {h.get('name') or 'Hotel name not specified'} "
+                f"({h.get('city') or 'city not returned'}, {h.get('star_rating') or 'rating not returned'}★) — "
+                f"price: {h.get('price_inr') if h.get('price_inr') is not None else 'not returned'} INR{tag}"
+            )
+
+    if not flights and not hotels:
+        lines.append(
+            "LIVE SEARCH returned no bookable options right now. Say this honestly — do not invent "
+            "any option — and offer to have their advisor pull options directly instead."
+        )
+
+    if live_results.get("hotel_results_id"):
+        lines.append(
+            "A detailed hotel results page (real photos/prices/map links for these same hotels) will "
+            "be attached to this reply automatically, right after your message — do NOT write or "
+            "invent any URL yourself, and do NOT say a link is unavailable for hotels. Just give a "
+            "brief natural-language summary of the hotel options above; mention that the full details "
+            "are in the page that follows."
+        )
+    else:
+        lines.append(
+            "No flight booking link is available in this chat — do not mention or imply one exists "
+            "for flights; their advisor shares the actual booking link/next step once they take it over."
+        )
+    return "\n".join(lines)
 
 
 # ---------------------------------------------------------------------------
@@ -1155,15 +1480,43 @@ async def advance(session: SessionState, user_text: str) -> FlowResult:
             mode, target_field, reason = "ask", missing[0], None
         elif stale:
             mode, target_field, reason = "reconfirm", stale[0], None
+        elif any(i in active_intents for i in ("flight_interest", "hotel_interest")):
+            # Every field a live search needs is known — run the real
+            # TripSure search once (cached on engine_state so a later turn
+            # re-presenting the same results doesn't re-hit TripSure), then
+            # let the reply be grounded only in what came back.
+            if not engine_state.get("results_fetched"):
+                live_results, search_error = await _fetch_live_results(profile, active_intents)
+                engine_state["live_results"] = live_results
+                engine_state["results_fetched"] = True
+                engine_state["results_error"] = search_error
+            mode, target_field, reason = "present_results", None, engine_state.get("results_error")
+            engine_state["has_recommended"] = True  # observability only — no longer load-bearing for closing
         else:
             mode, target_field, reason = "recommend", None, None
             engine_state["has_recommended"] = True  # observability only — no longer load-bearing for closing
+
+    bulk_request = bool(_BULK_REQUEST_PATTERN.search(user_text))
+
+    # Fixed-format opener: a genuinely fresh flight-booking ask (nothing
+    # about who/when/where known yet, flight the only active intent, no
+    # bulk-request escape hatch invoked) uses Instinct's exact intro-line +
+    # bullet-list wording — returned directly rather than left to the
+    # model's paraphrasing, so the format is guaranteed exact. Every other
+    # "ask" case (context already known, later tiers, hotel intent, bulk
+    # request) is untouched and still goes through compose_reply as before.
+    if mode == "ask" and _is_fresh_flight_opener(missing, active_intents, bulk_request):
+        return FlowResult(_FLIGHT_FRESH_OPENER)
 
     try:
         response_b = await _get_client().messages.create(
             model=MODEL,
             max_tokens=MAX_TOKENS_REPLY,
-            system=_reply_system_prompt(profile, intent, mode, target_field, reason, direct_question, today, active_intents),
+            system=_reply_system_prompt(
+                profile, intent, mode, target_field, reason, direct_question, today, active_intents, missing,
+                _format_live_results_block(engine_state["live_results"]) if mode == "present_results" and engine_state.get("live_results") else None,
+                bulk_request,
+            ),
             tools=[_REPLY_TOOL],
             tool_choice={"type": "tool", "name": "compose_reply"},
             messages=_build_messages(session.history, user_text),
@@ -1187,7 +1540,16 @@ async def advance(session: SessionState, user_text: str) -> FlowResult:
             "[AANYA_FLOW_V5] compose_reply wrote closing-sounding text in mode=%r (missing=%r), replacing: %r",
             mode, missing, reply,
         )
-        reply = _safe_ask_reply(mode, target_field, reason)
+        reply = _safe_ask_reply(mode, target_field, reason, missing)
+
+    hotel_results_id = engine_state.get("live_results", {}).get("hotel_results_id") if mode == "present_results" else None
+    if hotel_results_id and settings.backend_base_url:
+        # Appended here, in Python, from the id we ourselves generated in
+        # _fetch_live_results — never written by the model, so this URL is
+        # always exactly correct and always points at real TripSure cards
+        # (hotel_results_id is only ever set when hotel_result.note was
+        # None, i.e. a genuine search — see advance()'s hotel branch).
+        reply = f"{reply}\n\n{settings.backend_base_url}/hotel-results/{hotel_results_id}"
 
     handoff = None
     if mode in ("closing", "escalate"):
