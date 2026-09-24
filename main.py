@@ -13,6 +13,7 @@ from app.routers.ai_router_v4 import router as ai_router_v4
 from app.routers.ai_router_v5 import router as ai_router_v5
 from app.routers.ai_router_v6 import router as ai_router_v6
 from app.routers.enquiry_router import router as enquiry_router
+from app.routers.cities_router import router as cities_router
 from app.routers.flight_router import router as flight_router
 from app.routers.hotel_router import router as hotel_router
 from app.routers.hotel_results_router import router as hotel_results_router
@@ -96,6 +97,7 @@ app.include_router(ai_router_v6)
 app.include_router(whatsapp_router_v6)
 app.include_router(internal_router)
 app.include_router(enquiry_router)
+app.include_router(cities_router)
 
 
 @app.get("/health")

@@ -124,7 +124,7 @@ TRIP_PROFILE_FIELDS = (
     "origin", "destination", "start_date", "end_date", "duration_nights",
     "trip_type", "return_date",
     "travellers", "traveller_type", "children_count", "child_ages", "infant_count",
-    "budget_amount", "budget_currency", "budget_per_person", "budget_total",
+    "budget_amount", "budget_currency", "budget_per_person", "budget_total", "budget_flexible",
     "cabin_class", "flight_time_pref", "direct_stops_pref", "airline_pref",
     "hotel_area", "room_requirements", "room_count", "star_rating_pref",
     "visa_context", "special_requirements",
@@ -270,44 +270,66 @@ _BULK_REQUEST_PATTERN = re.compile(
     re.IGNORECASE,
 )
 
-# The exact fixed-format opener for a genuinely fresh flight-booking
-# request (Instinct's own intro-line + bullet-list style) — used ONLY for
-# this one specific case (see _is_fresh_flight_opener), never generated
-# by the model, so the wording/format is guaranteed exact rather than
-# left to paraphrasing.
-_FLIGHT_FRESH_OPENER = (
-    "Got it, send me your flight trip details here\n\n"
-    "From city\n"
-    "Destination\n"
-    "Travel date or dates\n"
-    "One way or return\n"
-    "Number of travellers"
-)
+# Flight-only ask style (this replaces the tiered/progressive questioning
+# built earlier tonight, FOR FLIGHTS ONLY — hotel keeps its existing
+# progressive/tiered "ask" behavior untouched, since that's gated
+# separately below on active_intents == ["flight_interest"]). Every
+# currently-missing flight field is asked together in ONE message, each
+# as its own short 2-5 word phrase (not a full sentence) — built
+# deterministically in Python, never left to the model to paraphrase, so
+# the format is always exactly this style.
+_FLIGHT_SHORT_PHRASES = {
+    "origin": "From city",
+    "destination": "To city",
+    "start_date": "Travel dates",
+    "trip_type": "One-way or return",
+    "_return_date_if_round_trip": "Return date",
+    "travellers": "Number of travellers",
+    "_infant_count_known": "Any kids/infants under 2",
+    "_child_ages_if_needed": "Kids' ages",
+    "direct_stops_pref": "Direct or open to stops",
+    "cabin_class": "Economy or Business",
+    "airline_pref": "Airline preference",
+}
+
+# Short, human-readable fragments for the "already have" line — kept
+# terse (not full sentences) when some fields are already known from
+# earlier context (e.g. discussed for a hotel search first).
+_FLIGHT_KNOWN_FIELD_ORDER = ("origin", "destination", "start_date", "travellers")
 
 
-def _lowest_tier_fields(missing_fields: list[str]) -> list[str]:
-    """The subset of missing_fields in the lowest (earliest) tier still
-    outstanding — same staging _mode_instruction's 'ask' branch uses."""
-    if not missing_fields:
-        return []
-    lowest_tier = min(_FIELD_TIER.get(f, 1) for f in missing_fields)
-    return [f for f in missing_fields if _FIELD_TIER.get(f, 1) == lowest_tier]
+def _flight_known_summary_bits(profile: dict) -> list[str]:
+    bits = []
+    origin = _get_value(profile, "origin")
+    destination = _get_value(profile, "destination")
+    if origin and destination:
+        bits.append(f"{origin} to {destination}")
+    elif destination:
+        bits.append(f"to {destination}")
+    elif origin:
+        bits.append(f"from {origin}")
+    start_date = _get_value(profile, "start_date")
+    if start_date:
+        bits.append(str(start_date))
+    travellers = _get_value(profile, "travellers")
+    if travellers:
+        bits.append(f"{travellers} traveller{'s' if travellers != 1 else ''}")
+    return bits
 
 
-_FLIGHT_TIER1_CORE = {"origin", "destination", "start_date", "travellers"}
-
-
-def _is_fresh_flight_opener(missing_fields: list[str], active_intents: list[str], bulk_request: bool) -> bool:
-    """True only for a genuinely fresh flight-booking ask: flight is the
-    only active intent, nothing about who/when/where is known yet (all
-    four tier-1 core fields are still missing), and the customer hasn't
-    invoked the bulk-request escape hatch. False the moment ANY tier-1
-    field is already known (context-reuse case) or another intent (e.g.
-    hotel) is also active — those keep the natural-sentence behavior."""
-    if bulk_request or active_intents != ["flight_interest"]:
-        return False
-    this_turn = set(_lowest_tier_fields(missing_fields))
-    return _FLIGHT_TIER1_CORE.issubset(this_turn)
+def _flight_ask_message(profile: dict, missing_fields: list[str]) -> str:
+    """Everything still missing for a flight, asked together in ONE
+    message, each field as its own short 2-5 word phrase. Zero-context
+    case reads as a plain intro + list; context-reuse case states what's
+    already known in one brief line first, then only the genuinely
+    missing phrases — never re-asking a known field."""
+    known_bits = _flight_known_summary_bits(profile)
+    if known_bits:
+        intro = f"Got it — {', '.join(known_bits)}. Still need:"
+    else:
+        intro = "Got it! Quick details needed:"
+    lines = [_FLIGHT_SHORT_PHRASES.get(f, f) for f in missing_fields]
+    return intro + "\n\n" + "\n".join(lines)
 
 
 def _field_meta(value, source: str, confidence: float, stale: bool = False) -> dict:
@@ -478,6 +500,17 @@ _ANALYZE_TOOL = {
                 "type": "number",
                 "description": 'ONLY if just given/changed — the numeric figure in budget_currency\'s units (e.g. 50000 for "50K"). Omit if nothing new was said.',
             },
+            "budget_flexible": {
+                "type": "boolean",
+                "description": (
+                    "ONLY true if the customer explicitly says they have no budget number in mind — "
+                    "\"no budget\", \"whatever it costs\", \"you tell me a range\", \"surprise me\", "
+                    "etc. This is a REAL, meaningful answer to the budget question, satisfying it "
+                    "just as fully as a number would — it means \"search without a budget filter and "
+                    "show me what's actually available,\" never \"give me a guessed price range.\" "
+                    "Omit if the customer gave an actual number, or hasn't addressed budget at all yet."
+                ),
+            },
             "budget_currency": {
                 "type": "string",
                 "description": "ONLY if just given/changed. Omit if nothing new was said (defaults to INR once an amount is known).",
@@ -621,8 +654,22 @@ general.
 
 BUDGET IS MATH, NOT A JUDGMENT: You may acknowledge a calculated trip-level budget total (already \
 computed for you — see TRIP PROFILE below) as a plain fact. Never call it sufficient, tight, \
-generous, comfortable, realistic, or exceeded, and never invent or estimate an actual flight/hotel \
-price, even phrased as a range from general knowledge. This build has no live pricing data connected.
+generous, comfortable, realistic, or exceeded.
+
+NEVER INVENT A PRICE RANGE — NO EXCEPTIONS: if the customer has no budget number in mind and asks \
+you to suggest one, name a typical range, or guess what things cost — do NOT answer that from \
+general/training knowledge, in ANY currency, ever. That number does not exist until a real TripSure \
+search runs. The only correct responses are: (a) treat "no budget in mind" as a complete, real \
+answer (budget_flexible) and move forward to a real search showing real prices, or (b) if you \
+genuinely cannot proceed yet, say plainly you can't estimate a price without checking live \
+availability, and offer to search with a flexible range instead. A specific number or range you \
+made up is exactly the kind of fabrication this build exists to prevent — treat it with the same \
+severity as inventing a flight price or a hotel name.
+
+CURRENCY IS ALWAYS INR: every price, budget figure, or cost this platform ever shows a customer — \
+stated, estimated, or from a real search result — is in INR (₹). Never state or imply a price in \
+GBP/£, USD/$, EUR/€, or any other currency, under any circumstance, even if a destination is a \
+country that doesn't use INR locally.
 
 DATE CLARIFICATION ONLY WHEN GENUINELY NEEDED: Dates are validated in code before you ever see this \
 prompt — if a date needed clarifying, you will already have been told so explicitly. Otherwise, \
@@ -637,8 +684,9 @@ customer wants a direct flight or is open to stops, and any airline preference �
 questions in due course, not forced all at once, but never skipped either.
 
 HOTEL RULES: A real hotel search needs area, dates, guests, how many rooms, a star-rating \
-preference (or explicit no-preference), and budget. Once all of those are known, move to \
-recommending — do not ask anything else "just to be thorough".
+preference (or explicit no-preference), and a budget — where "no budget in mind, show me what's \
+available" is itself a complete, valid answer to that last one, not a blocker. Once all of those \
+are known, move to a real search — do not ask anything else "just to be thorough".
 
 LABELING DISCIPLINE — never state a suggestion as settled fact: a destination/route/area suggestion \
 is a RECOMMENDATION; a budget or cost figure you mention is an ESTIMATE; anything still needing the \
@@ -687,6 +735,14 @@ def _profile_summary(profile: dict) -> str:
     for field in TRIP_PROFILE_FIELDS:
         if field in ("budget_currency", "budget_per_person"):
             continue  # folded into the budget_amount/budget_total lines below
+        if field == "budget_flexible":
+            if _get_value(profile, "budget_flexible") is True and _get_value(profile, "budget_amount") is None:
+                lines.append(
+                    "- stated budget: none — customer explicitly said no fixed budget/flexible "
+                    "[explicit] (real search will show actual prices; NEVER invent a number or "
+                    "range here yourself)"
+                )
+            continue
         meta = profile.get(field)
         if not meta or meta.get("value") in (None, "", []):
             continue
@@ -728,6 +784,22 @@ def _mode_instruction(
                 "question."
             )
         missing_fields = missing_fields or [target_field]
+
+        if active_intents == ["flight_interest"] and len(missing_fields) > 1:
+            # Reached only when the customer's latest message also asked a
+            # direct question (advance() otherwise builds this deterministically
+            # via _flight_ask_message, bypassing compose_reply entirely) — flight
+            # asks are no longer tiered/progressive: ask everything still
+            # missing together, each as its own short 2-5 word phrase, not a
+            # full sentence, right after answering the customer's question.
+            hints = [_FLIGHT_SHORT_PHRASES.get(f, FIELD_QUESTION_HINTS.get(f, f)) for f in missing_fields]
+            bullet_hints = "\n".join(hints)
+            return (
+                "After answering the direct question above, list everything still needed for the "
+                "flight together in ONE short block: a brief lead-in line, then each item on its "
+                "own line as a short 2-5 word phrase (e.g. 'From city', 'Travel dates') — never a "
+                f"full sentence, never one-at-a-time. The items still needed:\n{bullet_hints}"
+            )
 
         if bulk_request:
             # The customer explicitly asked for everything at once — the
@@ -1069,11 +1141,41 @@ def _safe_budget_reply(profile: dict) -> str:
     total = _get_value(profile, "budget_total")
     currency = _get_value(profile, "budget_currency") or "INR"
     if total is not None:
-        return (
-            f"That's {total:,.0f} {currency} total. I'll check that against actual flights and "
-            "hotels once search is available, rather than guess."
-        )
-    return "I'll check that against actual options once search is available, rather than guess."
+        return f"That's {total:,.0f} {currency} total. I'll check that against real search results, rather than guess."
+    return "I'll check that against real search results, rather than guess."
+
+
+# ---------------------------------------------------------------------------
+# Invented-price safety net. This is the gap Step 2 of the task flagged as
+# structurally worse than the flight-fallback bug: that bug at least had a
+# REAL (if synthetic) tool response to detect via `.note` before trusting
+# it. Here, when the customer has no budget number and asks Aanya to
+# suggest one, there is NO tool call at all for a deterministic check to
+# inspect — the only signal available is the reply text itself. Scoped
+# narrowly to mode == "ask" with target_field == "budget_amount" (the
+# ONLY point in the flow where nothing about budget is known yet, so any
+# currency-amount figure in the reply is unambiguously invented, never a
+# legitimate echo of something the customer or a real search already
+# said) to avoid false-positiving on a normal restated total elsewhere.
+# ---------------------------------------------------------------------------
+
+_CURRENCY_AMOUNT_PATTERN = re.compile(
+    r"(₹|\$|£|€|\bINR\b|\bUSD\b|\bGBP\b|\bEUR\b)\s?[\d][\d,]*",
+    re.IGNORECASE,
+)
+
+
+def _violates_invented_price_rule(reply: str, mode: str, target_field: str | None) -> bool:
+    if mode != "ask" or target_field != "budget_amount":
+        return False
+    return bool(_CURRENCY_AMOUNT_PATTERN.search(reply))
+
+
+def _safe_no_budget_reply() -> str:
+    return (
+        "I can't estimate prices without checking live availability — should I search with a "
+        "flexible range, or do you have a rough number in mind?"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -1207,6 +1309,19 @@ def missing_required_fields(profile: dict, required: list[str]) -> tuple[list[st
             if _get_value(profile, "infant_count") is None:
                 missing.append(field)
             continue
+        if field == "budget_amount":
+            # "No budget in mind, search and show me what's out there" is
+            # a real, complete answer (budget_flexible=True) — it must run
+            # a real search same as any other complete profile, NEVER get
+            # treated as "still missing" in a way that pushes the model
+            # toward inventing a number to fill the gap.
+            has_budget = (
+                _get_value(profile, "budget_amount") is not None
+                or _get_value(profile, "budget_flexible") is True
+            )
+            if not has_budget:
+                missing.append(field)
+            continue
         meta = profile.get(field)
         if not meta or meta.get("value") in (None, "", []):
             missing.append(field)
@@ -1314,6 +1429,7 @@ async def _fetch_live_results(profile: dict, active_intents: list[str]) -> tuple
                             "nights": nights,
                             "star_rating_pref": _get_value(profile, "star_rating_pref"),
                             "budget_amount": _get_value(profile, "budget_amount"),
+                            "budget_flexible": _get_value(profile, "budget_flexible"),
                             "hotel_area": _get_value(profile, "hotel_area"),
                         },
                     )
@@ -1498,15 +1614,18 @@ async def advance(session: SessionState, user_text: str) -> FlowResult:
 
     bulk_request = bool(_BULK_REQUEST_PATTERN.search(user_text))
 
-    # Fixed-format opener: a genuinely fresh flight-booking ask (nothing
-    # about who/when/where known yet, flight the only active intent, no
-    # bulk-request escape hatch invoked) uses Instinct's exact intro-line +
-    # bullet-list wording — returned directly rather than left to the
-    # model's paraphrasing, so the format is guaranteed exact. Every other
-    # "ask" case (context already known, later tiers, hotel intent, bulk
-    # request) is untouched and still goes through compose_reply as before.
-    if mode == "ask" and _is_fresh_flight_opener(missing, active_intents, bulk_request):
-        return FlowResult(_FLIGHT_FRESH_OPENER)
+    # Flight-only ask: everything still missing goes out together in ONE
+    # message, each as a short 2-5 word phrase — built deterministically
+    # in Python (never left to the model to paraphrase into full
+    # sentences), replacing the earlier tiered/progressive flow FOR
+    # FLIGHTS SPECIFICALLY. Skipped only when the customer's latest
+    # message also asked a real direct question — that case still needs
+    # the model's own reply to answer it, so it falls through to
+    # compose_reply below (with the same short-phrase style applied via
+    # _mode_instruction). Hotel intent is untouched: this only fires when
+    # flight is the SOLE active intent.
+    if mode == "ask" and active_intents == ["flight_interest"] and not direct_question:
+        return FlowResult(_flight_ask_message(profile, missing))
 
     try:
         response_b = await _get_client().messages.create(
@@ -1532,7 +1651,10 @@ async def advance(session: SessionState, user_text: str) -> FlowResult:
 
     reply = str(data_b["reply"]).strip()
 
-    if _violates_budget_feasibility_rule(reply):
+    if _violates_invented_price_rule(reply, mode, target_field):
+        _log.warning("[AANYA_FLOW_V5] compose_reply invented a price/range with nothing to ground it, replacing: %r", reply)
+        reply = _safe_no_budget_reply()
+    elif _violates_budget_feasibility_rule(reply):
         _log.warning("[AANYA_FLOW_V5] compose_reply violated budget-feasibility rule, replacing: %r", reply)
         reply = _safe_budget_reply(profile)
     elif _violates_premature_closing_rule(reply, mode):

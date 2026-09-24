@@ -1,10 +1,14 @@
 import logging
 import re
 import secrets
+import time
 from datetime import datetime, timedelta, timezone
+from functools import lru_cache
 
 import httpx
 from postgrest.exceptions import APIError
+from supabase import create_client
+from supabase_auth.errors import AuthApiError
 
 from app.config import settings
 from app.dependencies.supabase_client import get_supabase_admin_client
@@ -62,6 +66,111 @@ def _require_client():
     if client is None:
         raise RuntimeError("SUPABASE_URL/SUPABASE_SERVICE_ROLE_KEY not configured")
     return client
+
+
+_AUTH_RETRY_ATTEMPTS = 3
+_AUTH_RETRY_BASE_DELAY = 0.4
+
+
+def _retry_on_connect_error(fn):
+    """Retries a callable on a transient connection-level failure — confirmed
+    live (2026-09-23, direct request): repeated httpx.ConnectError ("Connection
+    reset by peer") specifically on POST /auth/v1/admin/users, right after this
+    module started making per-redeem calls into Supabase Auth's admin API.
+    This is a network failure (the connection never completed), not a normal
+    error response — AuthApiError/APIError handling elsewhere in this module
+    doesn't see it at all, so it needs its own retry. Only retries connection-
+    level exceptions; a real 4xx/5xx from Supabase (e.g. email_exists) is
+    never retried here — those raise/return immediately as before."""
+    last_exc = None
+    for attempt in range(_AUTH_RETRY_ATTEMPTS):
+        try:
+            return fn()
+        except (httpx.ConnectError, httpx.ConnectTimeout, httpx.RemoteProtocolError) as exc:
+            last_exc = exc
+            if attempt < _AUTH_RETRY_ATTEMPTS - 1:
+                time.sleep(_AUTH_RETRY_BASE_DELAY * (2**attempt))
+    raise last_exc
+
+
+@lru_cache
+def _get_session_issuer_client():
+    """A second, long-lived Client — deliberately separate from
+    get_supabase_admin_client()'s cached singleton, and used ONLY for
+    verify_otp() during session issuance (see _issue_session_for_new_auth_user).
+    Never used for anything else (no table queries, no admin calls), so its
+    session state being overwritten by whichever member most recently
+    claimed an invite is harmless — nothing else ever reads that state; the
+    caller only ever uses verify_otp()'s own return value.
+
+    FIXED (2026-09-23, direct request — found during real testing, not
+    assumed): this used to be a fresh `create_client(...)` per call,
+    closed immediately after ("a disposable client, used once and
+    discarded"). That was true in intent but wrong in execution — first
+    confirmed as a genuine leak (never actually closed, which itself
+    caused the reported "Connection reset by peer" errors on the admin
+    API by exhausting connections over repeated redeems); then, even
+    after adding an explicit close(), opening + immediately tearing down
+    a brand-new httpsx connection on every single call reproduced its own
+    connection-level failures live (ConnectTimeout on the TLS handshake)
+    — rapid-fire fresh connections are themselves the problem in this
+    environment's outbound networking, not something a bigger retry count
+    papers over. A second cached, reused client is the actual fix: it
+    still never touches the service-role client's session (the original
+    bug this design exists to avoid), but it isn't rebuilt from scratch on
+    every request either."""
+    return create_client(settings.supabase_url, settings.supabase_service_role_key)
+
+
+def _issue_session_for_new_auth_user(email: str, hashed_token: str) -> dict | None:
+    """Redeems a magic-link token for a real access/refresh token pair, via
+    _get_session_issuer_client() — never the shared admin client from
+    _require_client() (see that function's docstring for why: verify_otp()
+    mutates whichever Client it's called on to that user's own session,
+    which silently downgraded the service-role client the first time this
+    ran directly on it)."""
+    scratch_client = _get_session_issuer_client()
+    verified = _retry_on_connect_error(
+        lambda: scratch_client.auth.verify_otp({"token_hash": hashed_token, "type": "magiclink"})
+    )
+    if not verified.session:
+        return None
+    return {
+        "access_token": verified.session.access_token,
+        "refresh_token": verified.session.refresh_token,
+        "expires_at": verified.session.expires_at,
+        "expires_in": verified.session.expires_in,
+        "token_type": verified.session.token_type,
+    }
+
+
+_LIST_USERS_PAGE_SIZE = 200
+_LIST_USERS_MAX_PAGES = 50  # safety cap (10k users) against a pathological infinite loop
+
+
+def _find_auth_user_by_email(client, email: str):
+    """Looks up an existing Supabase Auth user by email (2026-09-23, direct
+    request: "someone with an existing login identity claiming their first
+    invite" must link to that account, not fail). This SDK's admin
+    list_users() has no email filter param (confirmed against the installed
+    version — dir(admin) has no get_user_by_email either), so this paginates
+    admin/users and matches client-side. Fine for TripAgent's invite-only
+    membership base; would need a real filtered lookup (or an SDK upgrade)
+    if the user base ever grows large enough for this to be slow. Returns
+    None if no page contains a match, including if the cap above is hit."""
+    email = email.strip().lower()
+    for page in range(1, _LIST_USERS_MAX_PAGES + 1):
+        users = _retry_on_connect_error(
+            lambda p=page: client.auth.admin.list_users(page=p, per_page=_LIST_USERS_PAGE_SIZE)
+        )
+        if not users:
+            return None
+        for u in users:
+            if (u.email or "").strip().lower() == email:
+                return u
+        if len(users) < _LIST_USERS_PAGE_SIZE:
+            return None
+    return None
 
 
 async def create_invitation_code(
@@ -249,9 +358,11 @@ def redeem_invite(code: str, details: dict | None = None) -> dict:
     until = now + timedelta(days=_GRANT_DAYS)
     until_iso = until.isoformat()
 
+    email = (details.get("email") or pulled.get("email") or "").strip().lower() or None
+
     member = {
         "name": details.get("name") or pulled.get("name") or None,
-        "email": (details.get("email") or pulled.get("email") or "").strip().lower() or None,
+        "email": email,
         "phone": details.get("phone") or pulled.get("phone") or None,
         "city": details.get("city") or None,
         "plan": "invited_year",
@@ -261,6 +372,54 @@ def redeem_invite(code: str, details: dict | None = None) -> dict:
         "member_until": until_iso,
         "updated_at": now.isoformat(),
     }
+
+    # Only an email-bearing redemption can get a real Supabase Auth
+    # identity (auth requires *something* to sign in with, and this app's
+    # only sign-in path is email OTP — see auth.tsx). Codes with no email
+    # at redeem time (the old invitation.html/capture() flow, where email
+    # is attached later) get their Auth identity created in
+    # capture_details() instead, via the exact same pattern below.
+    auth_user_id = None
+    created_new_auth_user = False
+    session = None
+    if email:
+        try:
+            created = _retry_on_connect_error(
+                lambda: client.auth.admin.create_user({"email": email, "email_confirm": True})
+            )
+            auth_user_id = created.user.id
+            created_new_auth_user = True
+        except AuthApiError as exc:
+            # Real Supabase error code for "an Auth user already owns this
+            # email" (confirmed against the live project, not assumed from
+            # docs) — distinct from site_members_email_uq below, which is
+            # this app's own table having a row, not Supabase Auth having a
+            # user.
+            #
+            # PRODUCT DECISION (2026-09-23, direct request): this is not
+            # necessarily a conflict — someone can have signed in to
+            # Supabase Auth before (or via some other path) without ever
+            # holding a TripAgent membership. That's "claiming their first
+            # invite with an existing login identity," not a duplicate.
+            # So: look the existing Auth user up and link THIS membership
+            # to it (never create a second Auth identity for the same
+            # email) rather than failing outright. The site_members insert
+            # below is still the one true duplicate-membership gate — if a
+            # site_members row already exists for this email too, that
+            # insert hits site_members_email_uq and returns "email_taken"
+            # exactly as it always has, unaffected by any of this.
+            if exc.code != "email_exists":
+                raise
+            existing = _find_auth_user_by_email(client, email)
+            if existing is None:
+                # Supabase just said this email exists, but the lookup
+                # couldn't find it (SDK limitation, race, or worse) — never
+                # silently proceed with no auth_uid; surface the same
+                # error the caller already handles rather than guess.
+                return {"valid": False, "error": "auth_account_exists"}
+            auth_user_id = existing.id
+        member["auth_uid"] = auth_user_id
+
     # FIXED (2026-09-17, direct request — found during real testing, not
     # assumed): this insert can collide on site_members_email_uq whenever
     # the email (client-supplied `details` or, now, pulled forward from an
@@ -269,10 +428,20 @@ def redeem_invite(code: str, details: dict | None = None) -> dict:
     # details.email could always have hit this; it just crashed uncaught
     # instead of failing gracefully). Matches capture_details()'s existing
     # "email_taken" handling for the exact same constraint, rather than
-    # surfacing as a raw 500.
+    # surfacing as a raw 500. This is the ONLY check for a true duplicate
+    # membership (an email with both an Auth user AND a site_members row
+    # already) — the auth_account_exists branch above never reaches here
+    # unless it successfully linked an existing Auth user with no
+    # site_members row yet, which is a legitimate first-time claim.
     try:
         inserted = client.table("site_members").insert(member).execute().data
     except APIError as exc:
+        # Only clean up an Auth user THIS call created — never delete one
+        # that already existed before this request (auth_user_id set via
+        # the existing-user lookup above is someone's real account, not an
+        # orphan we're responsible for).
+        if auth_user_id and created_new_auth_user:
+            client.auth.admin.delete_user(auth_user_id)
         if exc.code == _POSTGRES_UNIQUE_VIOLATION:
             return {"valid": False, "error": "email_taken"}
         raise
@@ -282,8 +451,36 @@ def redeem_invite(code: str, details: dict | None = None) -> dict:
         {"status": "redeemed", "redeemed_by": member_id, "redeemed_at": now.isoformat()}
     ).eq("code", code).execute()
 
+    if auth_user_id:
+        # Issues a real session for the Auth user just created, without a
+        # second round trip through the client (no magic-link email sent,
+        # no redirect) — generate_link() mints a one-time token server-side,
+        # _issue_session_for_new_auth_user() immediately redeems it for an
+        # access/refresh token pair, same tokens the client-side
+        # verifyLogin() OTP flow already produces (auth.tsx). This is the
+        # only server-side path GoTrue exposes for "log this just-created
+        # user in" — there is no separate "issue session for user id"
+        # admin call.
+        link = _retry_on_connect_error(
+            lambda: client.auth.admin.generate_link({"type": "magiclink", "email": email})
+        )
+        session = _issue_session_for_new_auth_user(email, link.properties.hashed_token)
+
     months = max(1, min(24, round(_GRANT_DAYS / 30)))
-    return {"valid": True, "months": months, "memberId": member_id, "advisorName": None}
+    return {
+        "valid": True,
+        "months": months,
+        "memberId": member_id,
+        "advisorName": None,
+        "session": session,
+        # Client has no other way to learn these (email/name were pulled
+        # server-side from the access request or client `details`) — the
+        # local-backend frontend needs them to hydrate ta_session itself,
+        # since it never queries site_members directly. Harmless to return:
+        # same values the client already sees reflected in its own request.
+        "email": email,
+        "name": member["name"],
+    }
 
 
 def _normalize_whatsapp(raw: str) -> str | None:
@@ -322,7 +519,17 @@ def capture_details(code: str, payload: dict) -> dict:
     still reading that. whatsapp_verified_at is intentionally left untouched
     here — real OTP send/verify is deferred to a later phase (no WhatsApp
     Business API provider is wired up yet); this step only captures and
-    format-validates the number."""
+    format-validates the number.
+
+    Auth (2026-09-23, direct request, same pattern as redeem_invite()):
+    invitation.html's flow redeems with no email at all (email is only
+    known once this step's capture beats run), so redeem_invite() never
+    got the chance to create a Supabase Auth identity for this row — this
+    is the step that first learns the email, so this is where that has to
+    happen instead. If the row already has auth_uid set (the
+    access-request pull-forward path, where redeem_invite() already did
+    this), this step leaves auth/session alone entirely — never issues a
+    second Auth user or a second session for an already-linked row."""
     client = _require_client()
 
     member_id = str(payload.get("memberId") or "").strip()
@@ -340,7 +547,7 @@ def capture_details(code: str, payload: dict) -> dict:
 
     rows = (
         client.table("site_members")
-        .select("id")
+        .select("id,auth_uid")
         .eq("id", member_id)
         .eq("invitation_code", code)
         .execute()
@@ -357,14 +564,55 @@ def capture_details(code: str, payload: dict) -> dict:
         "city": (payload.get("city") or "").strip() or None,
         "updated_at": datetime.now(timezone.utc).isoformat(),
     }
+
+    auth_user_id = None
+    created_new_auth_user = False
+    session = None
+    # Only create/link an Auth identity when this row doesn't already have
+    # one (see docstring) and an email was actually captured — mirrors
+    # redeem_invite()'s "auth requires something to sign in with" gate.
+    if email and not rows[0].get("auth_uid"):
+        try:
+            created = _retry_on_connect_error(
+                lambda: client.auth.admin.create_user({"email": email, "email_confirm": True})
+            )
+            auth_user_id = created.user.id
+            created_new_auth_user = True
+        except AuthApiError as exc:
+            # Same product decision as redeem_invite(): an existing Auth
+            # user with no site_members row is a legitimate first-time
+            # claim, not a duplicate — link to it instead of failing.
+            if exc.code != "email_exists":
+                raise
+            existing = _find_auth_user_by_email(client, email)
+            if existing is None:
+                return {"ok": False, "error": "auth_account_exists"}
+            auth_user_id = existing.id
+        update["auth_uid"] = auth_user_id
+
     try:
         client.table("site_members").update(update).eq("id", member_id).execute()
     except APIError as exc:
+        # Only clean up an Auth user THIS call created — see redeem_invite().
+        if auth_user_id and created_new_auth_user:
+            client.auth.admin.delete_user(auth_user_id)
         if exc.code == _POSTGRES_UNIQUE_VIOLATION:
             return {"ok": False, "error": "email_taken"}
         raise
 
-    return {"ok": True, "memberId": member_id}
+    if auth_user_id:
+        link = _retry_on_connect_error(
+            lambda: client.auth.admin.generate_link({"type": "magiclink", "email": email})
+        )
+        session = _issue_session_for_new_auth_user(email, link.properties.hashed_token)
+
+    return {
+        "ok": True,
+        "memberId": member_id,
+        "session": session,
+        "email": email,
+        "name": update["name"],
+    }
 
 
 # DRAFT — not the spec's verified literal text (2026-09-15 and 2026-09-16
