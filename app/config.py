@@ -61,6 +61,17 @@ class Settings:
         # fee, no attribution required (see pexels_service.py's own note).
         self.pexels_api_key = os.environ.get("PEXELS_API_KEY", "").strip()
 
+        # Optional — Google Places API (New), for live venue photos/location
+        # lookups (app/services/places_service.py). Server-side only: never
+        # exposed to the frontend. Unset means places_service returns
+        # "not found" for every lookup rather than erroring. Places API (New)
+        # content (photos, names, ratings) has no caching exception in
+        # Google's terms, so places_service only keeps a short-lived
+        # in-memory dedup cache (minutes, not persistent) — never writes
+        # results to Supabase/disk the way image_cache_service.py does for
+        # hotel photos.
+        self.google_places_api_key = os.environ.get("GOOGLE_PLACES_API_KEY", "").strip()
+
         # Demo-safety kill switch for the concierge chat (see
         # backend/docs/hotel-booking-signoff.md) — same pattern proposed
         # there for BOOKING_LIVE_ENABLED. Defaults to true: until Amit signs

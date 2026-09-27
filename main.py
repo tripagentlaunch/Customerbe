@@ -18,6 +18,8 @@ from app.routers.flight_router import router as flight_router
 from app.routers.hotel_router import router as hotel_router
 from app.routers.hotel_results_router import router as hotel_results_router
 from app.routers.invite_router import router as invite_router
+from app.routers.places_router import router as places_router
+from app.routers.referral_router import router as referral_router
 from app.internal.internal_router import router as internal_router
 from app.routers.whatsapp_router_v6 import router as whatsapp_router_v6
 
@@ -88,6 +90,7 @@ app.include_router(flight_router)
 app.include_router(admin_router)
 app.include_router(access_request_router)
 app.include_router(invite_router)
+app.include_router(referral_router)
 app.include_router(ai_router)
 app.include_router(ai_router_v2)
 app.include_router(ai_router_v3)
@@ -98,6 +101,7 @@ app.include_router(whatsapp_router_v6)
 app.include_router(internal_router)
 app.include_router(enquiry_router)
 app.include_router(cities_router)
+app.include_router(places_router)
 
 
 @app.get("/health")

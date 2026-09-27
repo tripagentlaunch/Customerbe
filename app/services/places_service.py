@@ -1,0 +1,188 @@
+"""
+TripAgent backend — app/services/places_service.py
+
+Live Google Places API (New) lookup for a named place's photo + location.
+Built as the first real consumer of the paid Places tier (Text Search +
+Place Photos), for Customerfe's itinerary plan slots and event map panes
+that currently have no photo/coordinates on file.
+
+CACHING — DELIBERATELY SHORT, NOT PERSISTENT. Confirmed against Google's
+Places API (New) policies (developers.google.com/maps/documentation/places/
+web-service/policies) before building this: place_id is cacheable
+indefinitely, coordinates up to 30 days, but display name / photos / every
+other field returned here has NO caching exception — it must be fetched
+live and displayed, never warehoused. Unlike pexels_service.py's 24-hour
+_CACHE (Pexels content has no such restriction) or
+image_cache_service.py's permanent Supabase Storage bucket, this module's
+_CACHE is a short in-memory TTL (a few minutes) that exists ONLY to dedupe
+near-simultaneous duplicate requests (e.g. React StrictMode double-invoke,
+a slot re-rendering) — never to avoid a live call on a later, genuinely
+separate page view. Do not raise _CACHE_TTL_SECONDS to "reduce API cost"
+without re-checking the ToS; that would turn dedup into prohibited
+caching.
+
+GOOGLE_PLACES_API_KEY is read here, server-side only, exactly like
+PEXELS_API_KEY above — never sent to or read by the frontend.
+
+RELEVANCE GATE — added after live-testing against Agra's whatsOn events
+(2026-09-25): Text Search's top result is NOT always the same thing as
+"the query's own subject". Querying "Diwali, Agra" returned "Dubey Ji
+Pataka Shop, Agra" (a firecracker shop) as its top hit — a real business,
+genuinely Diwali-adjacent by category, but not what a caller means by
+"Diwali's location" for a city event calendar. Same failure shape as
+pexels_service's documented Zense Resort case: a lenient search engine
+finding *something* plausible-sounding is not the same as finding the
+right thing. `_is_relevant_match` below requires the query's own
+distinctive words to actually appear in the place's returned display
+name before a match is accepted — same principle as
+pexels_service._is_relevant_match, reused here.
+"""
+import re
+import time
+from typing import Optional
+
+import httpx
+
+from app.config import settings
+
+_GENERIC_WORDS = {
+    "the", "and", "of", "a", "an", "in", "at", "near", "hotel", "hotels",
+}
+
+
+def _distinctive_terms(name: str) -> list[str]:
+    words = re.findall(r"[A-Za-z']+", name or "")
+    distinctive = [w.lower() for w in words if len(w) > 2 and w.lower() not in _GENERIC_WORDS]
+    return distinctive or [w.lower() for w in words if w]
+
+
+def _is_relevant_match(query: str, place_display_name: str) -> bool:
+    """True only if the query's own distinctive word(s) appear in what
+    Places itself calls the place — never accepted on a bare top-result
+    (see this module's docstring for why that's unsafe)."""
+    name_lower = (place_display_name or "").lower()
+    terms = _distinctive_terms(query)
+    if not terms:
+        return False
+    return any(term in name_lower for term in terms)
+
+_SEARCH_URL = "https://places.googleapis.com/v1/places:searchText"
+_PHOTO_URL_TEMPLATE = "https://places.googleapis.com/v1/{photo_name}/media"
+
+# Field mask kept deliberately narrow — displayName/photos/location/id only.
+# Adding `rating` (or several other fields) would move this call from the
+# Pro SKU to the pricier Enterprise SKU; we don't need rating for this
+# feature, so we don't ask for it.
+_FIELD_MASK = "places.id,places.displayName,places.photos,places.location"
+
+# Request-dedup only — see module docstring. {(name, city): (expiry, value)}.
+_CACHE: dict = {}
+_CACHE_TTL_SECONDS = 5 * 60
+
+
+async def lookup_place(name: str, city: str) -> Optional[dict]:
+    """Returns {"place_name", "lat", "lon", "photo_url", "attribution"} for
+    the best Text Search match of "<name>, <city>", or None if unset API
+    key, empty name, the search errors, or no place/photo is found. Never
+    fabricated — a miss is None, not a guessed result."""
+    name = (name or "").strip()
+    if not name:
+        return None
+    if not settings.google_places_api_key:
+        return None
+
+    city = (city or "").strip()
+    query = f"{name}, {city}" if city else name
+    cache_key = (name, city)
+
+    now = time.time()
+    cached = _CACHE.get(cache_key)
+    if cached is not None and cached[0] > now:
+        return cached[1]
+    if cached is not None:
+        del _CACHE[cache_key]  # expired — evict rather than let the dict grow unbounded
+
+    try:
+        async with httpx.AsyncClient(timeout=8.0) as client:
+            response = await client.post(
+                _SEARCH_URL,
+                json={"textQuery": query, "maxResultCount": 1},
+                headers={
+                    "X-Goog-Api-Key": settings.google_places_api_key,
+                    "X-Goog-FieldMask": _FIELD_MASK,
+                    "Content-Type": "application/json",
+                },
+            )
+        response.raise_for_status()
+        data = response.json()
+    except (httpx.HTTPError, ValueError) as exc:
+        body = getattr(getattr(exc, "response", None), "text", "")
+        print(f"[PLACES] searchText failed for {query!r}: {type(exc).__name__}: {exc} | body={body}")
+        # Not cached — a transient failure should be retried on the next
+        # request, not remembered as "not found" even for a few minutes.
+        return None
+
+    places = data.get("places") or []
+    if not places:
+        _CACHE[cache_key] = (now + _CACHE_TTL_SECONDS, None)
+        return None
+
+    place = places[0]
+    place_display_name = (place.get("displayName") or {}).get("text") or ""
+    if not _is_relevant_match(name, place_display_name):
+        print(f"[PLACES] rejected irrelevant match for {query!r}: top result was {place_display_name!r}")
+        _CACHE[cache_key] = (now + _CACHE_TTL_SECONDS, None)
+        return None
+
+    photos = place.get("photos") or []
+    if not photos:
+        _CACHE[cache_key] = (now + _CACHE_TTL_SECONDS, None)
+        return None
+
+    photo_name = photos[0].get("name")
+    location = place.get("location") or {}
+    lat = location.get("latitude")
+    lon = location.get("longitude")
+    if not photo_name or lat is None or lon is None:
+        _CACHE[cache_key] = (now + _CACHE_TTL_SECONDS, None)
+        return None
+
+    author_attributions = photos[0].get("authorAttributions") or []
+    attribution = author_attributions[0].get("displayName") if author_attributions else None
+
+    result = {
+        "place_name": (place.get("displayName") or {}).get("text") or name,
+        "lat": lat,
+        "lon": lon,
+        # Raw Places photo reference (e.g. "places/.../photos/...") — NOT a
+        # fetchable URL and NEVER carries the API key. The router turns
+        # this into a same-origin `/api/places/photo?ref=...` link for the
+        # frontend; fetch_photo_bytes() below is what actually calls Google
+        # with the key, server-side only, when that proxy route is hit.
+        "photo_ref": photo_name,
+        "attribution": attribution,
+    }
+    _CACHE[cache_key] = (now + _CACHE_TTL_SECONDS, result)
+    return result
+
+
+async def fetch_photo_bytes(photo_ref: str) -> Optional[tuple[bytes, str]]:
+    """Fetches the actual JPEG bytes for a photo_ref returned by
+    lookup_place(), using GOOGLE_PLACES_API_KEY server-side. Returns
+    (bytes, content_type) or None on failure/missing key. The key never
+    leaves this process — the frontend only ever sees photo_ref and our
+    own /api/places/photo proxy URL, never a Google URL."""
+    if not settings.google_places_api_key or not photo_ref:
+        return None
+    try:
+        async with httpx.AsyncClient(timeout=8.0, follow_redirects=True) as client:
+            response = await client.get(
+                _PHOTO_URL_TEMPLATE.format(photo_name=photo_ref),
+                params={"maxWidthPx": 900, "key": settings.google_places_api_key},
+            )
+        response.raise_for_status()
+    except httpx.HTTPError as exc:
+        print(f"[PLACES] photo media fetch failed for {photo_ref!r}: {type(exc).__name__}: {exc}")
+        return None
+    content_type = response.headers.get("content-type", "image/jpeg")
+    return response.content, content_type

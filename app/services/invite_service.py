@@ -180,6 +180,8 @@ async def create_invitation_code(
     *,
     send_email: bool = True,
     access_request_id: str | None = None,
+    referred_by_member_id: str | None = None,
+    friend_phone: str | None = None,
 ) -> dict:
     """Single choke point for every issuance path — the curated admin invite
     (admin_router.py's /invite-customer) and the approved-access-request path
@@ -236,6 +238,8 @@ async def create_invitation_code(
                     "status": "unused",
                     "expires_at": expires_at_iso,
                     "access_request_id": access_request_id,
+                    "referred_by_member_id": referred_by_member_id,
+                    "friend_phone": friend_phone,
                 }
             ).execute()
             code = candidate
@@ -341,7 +345,22 @@ def redeem_invite(code: str, details: dict | None = None) -> dict:
     invitation.html/capture() flow, or any future caller) still wins over
     the pulled values when both are present — explicit input over inferred
     data. Codes with no access_request_id (the curated admin path) behave
-    exactly as before this change: null unless `details` supplies them."""
+    exactly as before this change: null unless `details` supplies them.
+
+    invited_by (Refer a Friend): if this code's row has a
+    referred_by_member_id (set by POST /referrals via
+    create_invitation_code()), it's copied onto the new site_members row's
+    own invited_by column — finally populating a column that's existed
+    since 0006 but was never written to. Null for every other issuance
+    path, same as before.
+
+    friend_phone (2026-09-25, direct request): same pull-forward idea as
+    access_request_id above, but read straight off THIS row — no second
+    table lookup needed, `select("*")` below already has it. Already
+    normalized to E.164 at write time (referral_service.create_referral()
+    via _normalize_whatsapp()), so no re-validation needed here.
+    `details`/pulled-from-access-request phone still win when present,
+    same explicit-over-inferred precedence as name/email above."""
     details = details or {}
     client = _require_client()
 
@@ -363,7 +382,7 @@ def redeem_invite(code: str, details: dict | None = None) -> dict:
     member = {
         "name": details.get("name") or pulled.get("name") or None,
         "email": email,
-        "phone": details.get("phone") or pulled.get("phone") or None,
+        "phone": details.get("phone") or pulled.get("phone") or row.get("friend_phone") or None,
         "city": details.get("city") or None,
         "plan": "invited_year",
         "status": "active",
@@ -371,6 +390,7 @@ def redeem_invite(code: str, details: dict | None = None) -> dict:
         "invitation_code": code,
         "member_until": until_iso,
         "updated_at": now.isoformat(),
+        "invited_by": row.get("referred_by_member_id"),
     }
 
     # Only an email-bearing redemption can get a real Supabase Auth

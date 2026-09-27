@@ -10,7 +10,7 @@ from app.models.hotel_models import (
     HotelListingRequest,
     HotelPriceCheckRequest,
 )
-from app.services import hotel_service, pexels_service
+from app.services import hotel_service, image_cache_service
 
 router = APIRouter(prefix="/api/hotel", tags=["hotel"])
 
@@ -87,36 +87,32 @@ async def get_hotel_public(hotel_key: str):
     note on why this repo never writes that table, only reads it); 404 for
     a hotelKey that's never appeared in a real TripSure search anywhere.
 
-    Pexels stock-photo priority (2026-09-17, direct request — REVISES the
-    2026-09-16 real-first-only behavior): 1) search Pexels by the HOTEL'S
-    OWN NAME (+ city) — a genuine attempt at finding THIS specific
-    property; 2) if that returns something actually relevant, use it,
-    labeled "REPRESENTATIVE IMAGE"; 3) if not (the common case — live-
-    tested against hotelKey 15259978/"Zense Resort": Pexels never returns
-    an empty list for a name+city query, but also never returned Zense
-    Resort itself, only generic/irrelevant matches, see
-    pexels_service.py's own docstring for the full test) fall back to the
-    REAL TripSure photo (hotel_snapshots.image) if one exists — no label
-    needed; 4) if neither exists, the existing blank placeholder. Never
-    the stored row itself — hotel_snapshots.image stays exactly what
-    TripSure gave us; this only enriches the RESPONSE. `imageSource` is
-    "pexels" (a genuine name match was found), "tripsure" (real photo
-    used), or null (neither) — see pexels_service.get_hotel_specific_photo's
-    own note on the relevance check that makes step 2 mean a real match,
-    not just "Pexels returned something"."""
+    Image resolution (2026-09-24, cache-first — REVISES the 2026-09-17
+    live-Pexels-every-request behavior): image_cache_service checks the
+    "hotel-images" Supabase Storage bucket for this hotel_key first and
+    returns its public URL with no external call on a hit. On a miss it
+    falls back to the SAME priority as before (Pexels by the hotel's own
+    name+city if genuinely relevant, else the real TripSure photo from
+    hotel_snapshots.image), then uploads whatever it found to the bucket
+    so the next request is a cache hit. Never the stored row itself —
+    hotel_snapshots.image stays exactly what TripSure gave us; this only
+    enriches the RESPONSE. `imageSource` is "pexels"/"tripsure" (a fresh
+    fetch, labeled by its original source), "cache" (served from the
+    bucket, original source not tracked), or null (nothing found
+    anywhere) — see image_cache_service.get_or_cache_hotel_image's own
+    docstring."""
     snapshot = hotel_service.get_snapshot(hotel_key)
     if not snapshot:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Hotel not found")
     result = dict(snapshot)
-    real_image = result.get("image")
 
-    stock = await pexels_service.get_hotel_specific_photo(result.get("name"), result.get("city"))
-    if stock:
-        result["image"] = stock["url"]
-        result["imageSource"] = "pexels"
-        result["imageCredit"] = stock.get("photographer")
-    elif real_image:
-        result["imageSource"] = "tripsure"
+    cached = await image_cache_service.get_or_cache_hotel_image(
+        hotel_key, result.get("name"), result.get("city"), result.get("image")
+    )
+    if cached:
+        result["image"] = cached["url"]
+        result["imageSource"] = cached["source"]
+        result["imageCredit"] = cached.get("photographer")
     else:
         result["image"] = None
         result["imageSource"] = None
