@@ -36,11 +36,25 @@ right thing. `_is_relevant_match` below requires the query's own
 distinctive words to actually appear in the place's returned display
 name before a match is accepted — same principle as
 pexels_service._is_relevant_match, reused here.
+
+PERFORMANCE (2026-09-28): two changes to cut real, non-caching latency:
+1. A single shared, persistent httpx.AsyncClient (module-level, lazily
+   created) instead of a fresh `async with httpx.AsyncClient()` per call.
+   Each fresh client pays a new TLS handshake; a shared client reuses
+   Google's already-open connection. This is connection pooling, not
+   content caching — no Places data is retained.
+2. lookup_place_with_photo() below fetches the search result AND the
+   photo bytes in one backend-side call (search -> photo lookup all
+   server-side), so the frontend makes ONE request instead of two
+   sequential ones (search, wait, then photo). Cuts the round-trip count
+   the browser has to wait through, independent of Google's own response
+   time.
 """
 import re
 import time
 from typing import Optional
 
+import asyncio
 import httpx
 
 from app.config import settings
@@ -48,6 +62,19 @@ from app.config import settings
 _GENERIC_WORDS = {
     "the", "and", "of", "a", "an", "in", "at", "near", "hotel", "hotels",
 }
+
+# Shared, persistent client — created once, reused for every Places call
+# in this process. Avoids a fresh TLS handshake per request (see module
+# docstring's Performance note). Never holds Places DATA, only the
+# connection itself.
+_client: Optional[httpx.AsyncClient] = None
+
+
+async def _get_shared_client() -> httpx.AsyncClient:
+    global _client
+    if _client is None or _client.is_closed:
+        _client = httpx.AsyncClient(timeout=8.0, follow_redirects=True)
+    return _client
 
 
 def _distinctive_terms(name: str) -> list[str]:
@@ -80,11 +107,32 @@ _CACHE: dict = {}
 _CACHE_TTL_SECONDS = 5 * 60
 
 
+async def _search_text(query: str, field_mask: str, max_results: int, place_type: Optional[str] = None) -> Optional[dict]:
+    """Shared Text Search POST used by both lookup_place and
+    search_nearby — same shared client, same error handling, avoids two
+    near-identical copies of this request drifting apart."""
+    client = await _get_shared_client()
+    body: dict = {"textQuery": query, "maxResultCount": max_results}
+    if place_type:
+        body["includedType"] = place_type
+    response = await client.post(
+        _SEARCH_URL,
+        json=body,
+        headers={
+            "X-Goog-Api-Key": settings.google_places_api_key,
+            "X-Goog-FieldMask": field_mask,
+            "Content-Type": "application/json",
+        },
+    )
+    response.raise_for_status()
+    return response.json()
+
+
 async def lookup_place(name: str, city: str) -> Optional[dict]:
-    """Returns {"place_name", "lat", "lon", "photo_url", "attribution"} for
-    the best Text Search match of "<name>, <city>", or None if unset API
-    key, empty name, the search errors, or no place/photo is found. Never
-    fabricated — a miss is None, not a guessed result."""
+    """Returns {"place_name", "lat", "lon", "photo_ref", "attribution"}
+    for the best Text Search match of "<name>, <city>", or None if unset
+    API key, empty name, the search errors, or no place/photo is found.
+    Never fabricated — a miss is None, not a guessed result."""
     name = (name or "").strip()
     if not name:
         return None
@@ -103,18 +151,7 @@ async def lookup_place(name: str, city: str) -> Optional[dict]:
         del _CACHE[cache_key]  # expired — evict rather than let the dict grow unbounded
 
     try:
-        async with httpx.AsyncClient(timeout=8.0) as client:
-            response = await client.post(
-                _SEARCH_URL,
-                json={"textQuery": query, "maxResultCount": 1},
-                headers={
-                    "X-Goog-Api-Key": settings.google_places_api_key,
-                    "X-Goog-FieldMask": _FIELD_MASK,
-                    "Content-Type": "application/json",
-                },
-            )
-        response.raise_for_status()
-        data = response.json()
+        data = await _search_text(query, _FIELD_MASK, max_results=1)
     except (httpx.HTTPError, ValueError) as exc:
         body = getattr(getattr(exc, "response", None), "text", "")
         print(f"[PLACES] searchText failed for {query!r}: {type(exc).__name__}: {exc} | body={body}")
@@ -171,18 +208,108 @@ async def fetch_photo_bytes(photo_ref: str) -> Optional[tuple[bytes, str]]:
     lookup_place(), using GOOGLE_PLACES_API_KEY server-side. Returns
     (bytes, content_type) or None on failure/missing key. The key never
     leaves this process — the frontend only ever sees photo_ref and our
-    own /api/places/photo proxy URL, never a Google URL."""
+    own /api/places/photo proxy URL, never a Google URL.
+
+    Retries (2026-09-29 fix, real reproduction: intermittent ConnectTimeout/
+    ReadTimeout hitting Google's photo media endpoint, making city-page
+    images load slowly or fail outright) — up to 2 extra attempts with a
+    short delay on a genuine network-level failure (connect/read timeout),
+    never on a real 4xx/5xx from Google itself. This is retrying OUR
+    network flakiness reaching Google, not caching Google's response —
+    still fully compliant with the no-photo-caching policy documented
+    above (every attempt is a fresh, live call)."""
     if not settings.google_places_api_key or not photo_ref:
         return None
-    try:
-        async with httpx.AsyncClient(timeout=8.0, follow_redirects=True) as client:
+    last_exc: Optional[Exception] = None
+    for attempt in range(3):
+        try:
+            client = await _get_shared_client()
             response = await client.get(
                 _PHOTO_URL_TEMPLATE.format(photo_name=photo_ref),
-                params={"maxWidthPx": 900, "key": settings.google_places_api_key},
+                params={"maxWidthPx": 600, "key": settings.google_places_api_key},
             )
-        response.raise_for_status()
-    except httpx.HTTPError as exc:
-        print(f"[PLACES] photo media fetch failed for {photo_ref!r}: {type(exc).__name__}: {exc}")
+            response.raise_for_status()
+            content_type = response.headers.get("content-type", "image/jpeg")
+            return response.content, content_type
+        except httpx.TransportError as exc:
+            # Real connect/read timeout — worth a quick retry.
+            last_exc = exc
+            if attempt < 2:
+                await asyncio.sleep(0.4)
+                continue
+        except httpx.HTTPError as exc:
+            # A real HTTP error status from Google itself — not a network
+            # blip, no point retrying.
+            print(f"[PLACES] photo media fetch failed for {photo_ref!r}: {type(exc).__name__}: {exc}")
+            return None
+    print(f"[PLACES] photo media fetch failed for {photo_ref!r} after 3 attempts: {type(last_exc).__name__}: {last_exc}")
+    return None
+
+
+async def lookup_place_with_photo(name: str, city: str) -> Optional[dict]:
+    """Same result shape as lookup_place(), but with photo BYTES already
+    fetched server-side and included as base64 — collapses the frontend's
+    two sequential requests (lookup, then a separate photo fetch) into
+    one. Used by the /api/places/lookup-with-photo endpoint; lookup_place
+    + /api/places/photo remain available separately for callers that
+    still want the two-step (proxy-URL) form."""
+    import base64
+
+    result = await lookup_place(name, city)
+    if result is None:
         return None
-    content_type = response.headers.get("content-type", "image/jpeg")
-    return response.content, content_type
+    fetched = await fetch_photo_bytes(result["photo_ref"])
+    if fetched is None:
+        return {**result, "photo_data_url": None}
+    content, content_type = fetched
+    b64 = base64.b64encode(content).decode("ascii")
+    return {**result, "photo_data_url": f"data:{content_type};base64,{b64}"}
+
+
+_CATEGORY_TYPES = {
+    "hotels": "lodging",
+    "attractions": "tourist_attraction",
+    "restaurants": "restaurant",
+}
+_NEARBY_FIELD_MASK = "places.id,places.displayName,places.photos,places.location,places.rating,places.userRatingCount,places.types"
+
+
+async def search_nearby(city: str, category: str, max_results: int = 20) -> list[dict]:
+    """Returns up to max_results places for a category ("hotels",
+    "attractions", "restaurants") in the given city, via Places Text
+    Search (New). Each result: place_name, lat, lon, rating,
+    rating_count, photo_ref (raw, same non-URL reference as lookup_place).
+    Never fabricated — empty list on any failure/missing key."""
+    if not settings.google_places_api_key:
+        return []
+    place_type = _CATEGORY_TYPES.get(category)
+    if not place_type:
+        return []
+
+    query = f"top {category} in {city}"
+    try:
+        data = await _search_text(query, _NEARBY_FIELD_MASK, max_results=max_results, place_type=place_type)
+    except (httpx.HTTPError, ValueError) as exc:
+        print(f"[PLACES] search_nearby failed for {query!r}: {type(exc).__name__}: {exc}")
+        return []
+
+    places = data.get("places") or []
+    results = []
+    for place in places:
+        location = place.get("location") or {}
+        lat = location.get("latitude")
+        lon = location.get("longitude")
+        if lat is None or lon is None:
+            continue
+        photos = place.get("photos") or []
+        photo_ref = photos[0].get("name") if photos else None
+        results.append({
+            "place_name": (place.get("displayName") or {}).get("text") or "",
+            "lat": lat,
+            "lon": lon,
+            "rating": place.get("rating"),
+            "rating_count": place.get("userRatingCount"),
+            "photo_ref": photo_ref,
+            "category": category,
+        })
+    return results

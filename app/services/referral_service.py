@@ -96,12 +96,27 @@ async def create_referral(access_token: str, payload: ReferralCreateRequest) -> 
     if _email_already_claimed(client, friend_email):
         raise ValueError("email_taken")
 
+    # Named code (2026-09-29, direct spec — same format as the advisor-
+    # console "Invite someone" path): friend's initials + HHMM generation
+    # time (12-hour, no am/pm) + referring member's initials, e.g.
+    # BH0605HA for a "Hari"-referred friend claimed at 6:05.
+    #
+    # referrer_name always truthy (2026-09-29 fix) — a blank site_members
+    # .name (real gap: some existing members have none) used to make this
+    # fall back to "" and, downstream, made create_invitation_code() pick
+    # the plain institutional email template instead of the hero-image
+    # one every referral should always use. Falling back to the
+    # referrer's own email keeps this truthy no matter what.
+    referrer_name = referrer.get("name") or referrer.get("email") or "A friend"
+    named_code = invite_service._generate_named_code(friend_name, referrer_name)
+
     invite = await invite_service.create_invitation_code(
         friend_name,
         friend_email,
-        referrer_name=referrer.get("name") or None,
+        referrer_name=referrer_name or None,
         send_email=True,
         referred_by_member_id=referrer["id"],
         friend_phone=friend_phone,
+        custom_code=named_code,
     )
     return invite
