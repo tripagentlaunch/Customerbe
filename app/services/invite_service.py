@@ -61,6 +61,17 @@ def _generate_code() -> str:
     return str(secrets.randbelow(90_000_000) + 10_000_000)
 
 
+def _generate_named_code(recipient_name: str, advisor_name: str) -> str:
+    """BH0325AN-style code (2026-09-29, direct spec): first 2 letters of
+    the customer's name, HHMM (12-hour, no am/pm marker) of generation
+    time, first 2 letters of the advisor's name."""
+    now = datetime.now()
+    name_part = "".join(ch for ch in recipient_name.upper() if ch.isalpha())[:2].ljust(2, "X")
+    time_part = now.strftime("%I") + now.strftime("%M")
+    advisor_part = "".join(ch for ch in advisor_name.upper() if ch.isalpha())[:2].ljust(2, "X")
+    return f"{name_part}{time_part}{advisor_part}"
+
+
 def _require_client():
     client = get_supabase_admin_client()
     if client is None:
@@ -182,6 +193,7 @@ async def create_invitation_code(
     access_request_id: str | None = None,
     referred_by_member_id: str | None = None,
     friend_phone: str | None = None,
+    custom_code: str | None = None,
 ) -> dict:
     """Single choke point for every issuance path — the curated admin invite
     (admin_router.py's /invite-customer) and the approved-access-request path
@@ -228,8 +240,15 @@ async def create_invitation_code(
     expires_at_iso = expires_at.isoformat()
 
     code = None
-    for _ in range(_MAX_GENERATION_ATTEMPTS):
-        candidate = _generate_code()
+    for attempt in range(_MAX_GENERATION_ATTEMPTS):
+        # A caller-supplied deterministic code (custom_code) collides only
+        # in the rare same-minute/same-advisor/same-initials case; append a
+        # numeric disambiguator on retry rather than looping on an
+        # identical candidate forever.
+        if custom_code:
+            candidate = custom_code if attempt == 0 else f"{custom_code}{attempt}"
+        else:
+            candidate = _generate_code()
         try:
             client.table("site_invitation_codes").insert(
                 {
@@ -240,6 +259,7 @@ async def create_invitation_code(
                     "access_request_id": access_request_id,
                     "referred_by_member_id": referred_by_member_id,
                     "friend_phone": friend_phone,
+                    "recipient_email": recipient_email,
                 }
             ).execute()
             code = candidate
@@ -259,12 +279,10 @@ async def create_invitation_code(
     if send_email:
         if referrer_full_name:
             referrer_first_name = referrer_full_name.split(" ")[0]
-            html = _invitation_referral_email_html(
-                referrer_first_name=referrer_first_name,
-                referrer_full_name=referrer_full_name,
-                invite_code=code,
-                expires_on=expires_on,
-                link=link,
+            html = _referral_invitation_email_html(
+                friend_name=recipient_name or "there",
+                inviter_name=referrer_full_name,
+                invitation_url=link,
             )
             subject = f"{referrer_first_name} has invited you to TripAgent"
         else:
@@ -377,7 +395,7 @@ def redeem_invite(code: str, details: dict | None = None) -> dict:
     until = now + timedelta(days=_GRANT_DAYS)
     until_iso = until.isoformat()
 
-    email = (details.get("email") or pulled.get("email") or "").strip().lower() or None
+    email = (details.get("email") or pulled.get("email") or row.get("recipient_email") or "").strip().lower() or None
 
     member = {
         "name": details.get("name") or pulled.get("name") or None,
@@ -652,97 +670,33 @@ _FINE_PRINT = (
 )
 
 
-def _invitation_referral_email_html(
-    referrer_first_name: str,
-    referrer_full_name: str,
-    invite_code: str,
-    expires_on: str,
-    link: str,
+def _referral_invitation_email_html(
+    friend_name: str,
+    inviter_name: str,
+    invitation_url: str,
 ) -> str:
-    """The Phase 5 invitation email. Table-based layout, inline styles only —
-    built to survive Outlook, not modern CSS. Deliberately no hero image, no
-    logo banner, no gradient button: typography and spacing only, so it
-    reads as a personal note from the referrer, not marketing/bulk mail.
-    Merge fields: referrer_first_name, referrer_full_name, invite_code,
-    expires_on (link is derived, not a spec'd merge field)."""
-    preheader = "Their invitation holds for 14 days."
-    return f"""<!doctype html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<meta http-equiv="X-UA-Compatible" content="IE=edge">
-<title>{referrer_first_name} has invited you to TripAgent</title>
-<!--[if mso]>
-<noscript><xml><o:OfficeDocumentSettings><o:PixelsPerInch>96</o:PixelsPerInch></o:OfficeDocumentSettings></xml></noscript>
-<![endif]-->
-</head>
-<body style="margin:0;padding:0;background-color:#f4f2ee;">
-  <div style="display:none;font-size:1px;line-height:1px;max-height:0;max-width:0;opacity:0;overflow:hidden;mso-hide:all;">
-    {preheader}&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;
-  </div>
-  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#f4f2ee;">
-    <tr>
-      <td align="center" style="padding:48px 16px;">
-        <table role="presentation" width="600" cellpadding="0" cellspacing="0" border="0" style="width:600px;max-width:600px;background-color:#ffffff;">
-          <tr>
-            <td style="padding:44px 48px 0;">
-              <p style="margin:0 0 28px;font-family:Arial,Helvetica,sans-serif;font-size:10px;letter-spacing:.24em;text-transform:uppercase;color:#6E2A38;">
-                TripAgent &middot; Membership by invitation
-              </p>
-              <h1 style="margin:0 0 22px;font-family:Georgia,'Times New Roman',serif;font-weight:400;font-size:28px;line-height:1.3;color:#1a1a1a;">
-                {referrer_first_name} thought you&rsquo;d want in.
-              </h1>
-              <p style="margin:0 0 8px;font-family:Georgia,'Times New Roman',serif;font-size:16px;line-height:1.65;color:#333333;">
-                TripAgent plans and runs travel for a small number of people. We keep it small deliberately &mdash; every trip is handled by someone who knows you, not by a queue. Membership is by invitation. {referrer_full_name} has given you one of theirs.
-              </p>
-            </td>
-          </tr>
-          <tr>
-            <td style="padding:24px 48px 0;">
-              <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="border:1px solid #ddd6cb;">
-                <tr>
-                  <td align="center" style="padding:28px 24px;">
-                    <p style="margin:0 0 12px;font-family:Arial,Helvetica,sans-serif;font-size:10px;letter-spacing:.2em;text-transform:uppercase;color:#8a8377;">
-                      Your invitation key
-                    </p>
-                    <p style="margin:0 0 12px;font-family:Georgia,'Times New Roman',serif;font-size:22px;font-weight:700;letter-spacing:.14em;color:#1a1a1a;">
-                      {invite_code}
-                    </p>
-                    <p style="margin:0;font-family:Georgia,'Times New Roman',serif;font-size:13px;font-style:italic;color:#6b6558;">
-                      Holds until {expires_on}. For you alone.
-                    </p>
-                  </td>
-                </tr>
-              </table>
-            </td>
-          </tr>
-          <tr>
-            <td align="center" style="padding:32px 48px 0;">
-              <table role="presentation" cellpadding="0" cellspacing="0" border="0">
-                <tr>
-                  <td align="center" bgcolor="#6E2A38">
-                    <a href="{link}" target="_blank" style="display:inline-block;padding:15px 34px;font-family:Arial,Helvetica,sans-serif;font-size:12.5px;letter-spacing:.14em;text-transform:uppercase;color:#ffffff;text-decoration:none;">
-                      Claim your invitation
-                    </a>
-                  </td>
-                </tr>
-              </table>
-            </td>
-          </tr>
-          <tr>
-            <td style="padding:36px 48px 44px;">
-              <p style="margin:0;font-family:Arial,Helvetica,sans-serif;font-size:11.5px;line-height:1.7;color:#918b7e;border-top:1px solid #ece7dc;padding-top:20px;">
-                {_FINE_PRINT}
-              </p>
-            </td>
-          </tr>
-        </table>
-      </td>
-    </tr>
-  </table>
-</body>
-</html>"""
+    """New Chic Stays-style referral invitation email (2026-09-27) — hero
+    image, service icons, invitation box layout. Reads the template from
+    app/email_templates/referral_invitation.html and fills its merge
+    fields. Distinct from _invitation_referral_email_html above (kept for
+    the original invite/claim flow) — this one is used specifically for
+    the "Refer a friend" form's own send."""
+    import os
+    template_path = os.path.join(
+        os.path.dirname(__file__), "..", "email_templates", "referral_invitation.html"
+    )
+    with open(template_path, "r") as f:
+        html = f.read()
+
+    tripagent_url = "https://www.tripagent.vip"
+    unsubscribe_url = f"{tripagent_url}/unsubscribe"
+
+    html = html.replace("{{FRIEND_NAME}}", friend_name)
+    html = html.replace("{{INVITER_NAME}}", inviter_name)
+    html = html.replace("{{INVITATION_URL}}", invitation_url)
+    html = html.replace("{{TRIPAGENT_URL}}", tripagent_url)
+    html = html.replace("{{UNSUBSCRIBE_URL}}", unsubscribe_url)
+    return html
 
 
 def _invitation_approved_request_email_html(

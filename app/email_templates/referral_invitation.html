@@ -1,0 +1,631 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="x-apple-disable-message-reformatting" />
+  <title>You're invited to explore the world — TripAgent</title>
+
+  <style>
+    body {
+      margin: 0;
+      padding: 0;
+      background: #eee9e2;
+      font-family: Arial, Helvetica, sans-serif;
+      color: #24201e;
+    }
+
+    table {
+      border-spacing: 0;
+      border-collapse: collapse;
+    }
+
+    img {
+      display: block;
+      border: 0;
+      max-width: 100%;
+    }
+
+    a {
+      text-decoration: none;
+    }
+
+    .wrapper {
+      width: 100%;
+      background: #eee9e2;
+      padding: 42px 0;
+    }
+
+    .email {
+      width: 680px;
+      max-width: 680px;
+      margin: 0 auto;
+      background: #fbfaf7;
+    }
+
+    .topbar {
+      padding: 17px 30px;
+      border-bottom: 1px solid #e4ded6;
+      color: #817b76;
+      font-size: 11px;
+      letter-spacing: 0.04em;
+    }
+
+    .topbar-right {
+      text-align: right;
+    }
+
+    .brand {
+      padding: 30px 40px 26px;
+      text-align: center;
+    }
+
+    .brand-name {
+      color: #762d3d;
+      font-family: Georgia, "Times New Roman", serif;
+      font-size: 27px;
+      letter-spacing: -0.02em;
+    }
+
+    .brand-subtitle {
+      margin-top: 7px;
+      color: #77716b;
+      font-size: 9px;
+      letter-spacing: 0.25em;
+      text-transform: uppercase;
+    }
+
+    .hero {
+      position: relative;
+    }
+
+    .hero img {
+      width: 100%;
+      height: 365px;
+      object-fit: cover;
+    }
+
+    .hero-overlay {
+      background: linear-gradient(
+        90deg,
+        rgba(12, 18, 22, 0.72) 0%,
+        rgba(12, 18, 22, 0.34) 58%,
+        rgba(12, 18, 22, 0.08) 100%
+      );
+      padding: 70px 55px;
+    }
+
+    .hero-kicker {
+      color: #f5eee7;
+      font-size: 10px;
+      letter-spacing: 0.25em;
+      text-transform: uppercase;
+      margin-bottom: 22px;
+    }
+
+    .hero-title {
+      color: #ffffff;
+      font-family: Georgia, "Times New Roman", serif;
+      font-size: 46px;
+      line-height: 1.05;
+      font-weight: normal;
+      max-width: 480px;
+      margin: 0;
+    }
+
+    .hero-title em {
+      color: #ead6d1;
+    }
+
+    .content {
+      padding: 46px 55px 0;
+    }
+
+    .greeting {
+      font-family: Georgia, "Times New Roman", serif;
+      font-size: 25px;
+      margin: 0 0 18px;
+      color: #27221f;
+    }
+
+    .body-copy {
+      color: #68625d;
+      font-size: 15px;
+      line-height: 1.75;
+      margin: 0;
+    }
+
+    .inviter {
+      color: #762d3d;
+      font-weight: bold;
+    }
+
+    .eyebrow {
+      color: #762d3d;
+      font-size: 10px;
+      letter-spacing: 0.25em;
+      text-transform: uppercase;
+      font-weight: bold;
+    }
+
+    .cta-wrap {
+      text-align: center;
+      padding: 34px 0 46px;
+    }
+
+    .cta-label {
+      color: #762d3d;
+      font-size: 10px;
+      letter-spacing: 0.28em;
+      text-transform: uppercase;
+      margin-bottom: 16px;
+    }
+
+    .cta {
+      display: inline-block;
+      background: #762d3d;
+      color: #ffffff !important;
+      padding: 17px 31px;
+      font-size: 11px;
+      letter-spacing: 0.16em;
+      text-transform: uppercase;
+    }
+
+    .section {
+      border-top: 1px solid #e4ded6;
+      padding: 38px 55px;
+    }
+
+    .section-title {
+      margin: 0 0 8px;
+      text-align: center;
+      color: #27221f;
+      font-family: Georgia, "Times New Roman", serif;
+      font-size: 25px;
+      font-weight: normal;
+    }
+
+    .section-intro {
+      text-align: center;
+      color: #77716b;
+      font-size: 13px;
+      line-height: 1.6;
+      margin: 0 auto 30px;
+      max-width: 510px;
+    }
+
+    .service {
+      width: 33.33%;
+      vertical-align: top;
+      text-align: center;
+      padding: 0 13px;
+    }
+
+    .service-icon {
+      width: 46px;
+      height: 46px;
+      margin: 0 auto 14px;
+      border-radius: 50%;
+      background: #f1e7e3;
+      color: #762d3d;
+      font-size: 19px;
+      line-height: 46px;
+    }
+
+    .service-title {
+      color: #762d3d;
+      font-size: 10px;
+      letter-spacing: 0.18em;
+      text-transform: uppercase;
+      font-weight: bold;
+      margin-bottom: 8px;
+    }
+
+    .service-text {
+      color: #77716b;
+      font-size: 11px;
+      line-height: 1.6;
+    }
+
+    .invitation-box {
+      background: #f4eee7;
+      border: 1px solid #e4d9cf;
+      margin-top: 8px;
+    }
+
+    .invitation-content {
+      padding: 27px 28px;
+    }
+
+    .gift-icon {
+      color: #762d3d;
+      font-size: 22px;
+      width: 50px;
+      vertical-align: top;
+    }
+
+    .invitation-title {
+      color: #27221f;
+      font-family: Georgia, "Times New Roman", serif;
+      font-size: 21px;
+      margin: 0 0 8px;
+    }
+
+    .invitation-text {
+      color: #77716b;
+      font-size: 12px;
+      line-height: 1.6;
+      margin: 0 0 18px;
+    }
+
+    .small-cta {
+      display: inline-block;
+      background: #762d3d;
+      color: #ffffff !important;
+      padding: 12px 20px;
+      font-size: 9px;
+      letter-spacing: 0.16em;
+      text-transform: uppercase;
+    }
+
+    .invitation-photo {
+      width: 150px;
+      padding-left: 15px;
+      vertical-align: middle;
+    }
+
+    .invitation-photo img {
+      width: 150px;
+      height: 145px;
+      object-fit: cover;
+    }
+
+    .footer {
+      border-top: 1px solid #e4ded6;
+      text-align: center;
+      padding: 38px 30px;
+    }
+
+    .footer-brand {
+      color: #762d3d;
+      font-family: Georgia, "Times New Roman", serif;
+      font-size: 21px;
+    }
+
+    .footer-subtitle {
+      color: #817b76;
+      font-size: 8px;
+      letter-spacing: 0.22em;
+      text-transform: uppercase;
+      margin-top: 6px;
+    }
+
+    .footer-copy {
+      color: #99928b;
+      font-size: 10px;
+      line-height: 1.6;
+      margin-top: 18px;
+    }
+
+    @media only screen and (max-width: 700px) {
+      .wrapper {
+        padding: 0;
+      }
+
+      .email {
+        width: 100% !important;
+      }
+
+      .topbar {
+        padding: 14px 18px;
+      }
+
+      .brand {
+        padding: 25px 20px;
+      }
+
+      .hero img {
+        height: 330px;
+      }
+
+      .hero-overlay {
+        padding: 50px 28px;
+      }
+
+      .hero-title {
+        font-size: 39px;
+      }
+
+      .content,
+      .section {
+        padding-left: 28px;
+        padding-right: 28px;
+      }
+
+      .service {
+        display: block;
+        width: 100%;
+        padding: 0 0 30px;
+      }
+
+      .invitation-photo {
+        display: none;
+      }
+
+      .invitation-content {
+        padding: 24px;
+      }
+    }
+  </style>
+</head>
+
+<body>
+
+  <table role="presentation" width="100%" class="wrapper">
+    <tr>
+      <td align="center">
+
+        <table role="presentation" class="email">
+
+          <tr>
+            <td>
+              <table role="presentation" width="100%" class="topbar">
+                <tr>
+                  <td>
+                    A special invitation from your friend
+                  </td>
+                  <td class="topbar-right">
+                    TripAgent
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+
+          <tr>
+            <td class="brand">
+              <div class="brand-name">TripAgent</div>
+              <div class="brand-subtitle">
+                Private travel, personally arranged
+              </div>
+            </td>
+          </tr>
+
+          <tr>
+            <td>
+              <div
+                class="hero"
+                style="
+                  background-image:
+                    url('https://images.unsplash.com/photo-1570077188670-e3a8d69ac5ff?auto=format&fit=crop&w=1400&q=85');
+                  background-size: cover;
+                  background-position: center;
+                "
+              >
+                <div class="hero-overlay">
+
+                  <div class="hero-kicker">
+                    A personal invitation
+                  </div>
+
+                  <h1 class="hero-title">
+                    You're invited<br />
+                    to explore<br />
+                    the <em>world.</em>
+                  </h1>
+
+                </div>
+              </div>
+            </td>
+          </tr>
+
+          <tr>
+            <td class="content">
+
+              <p class="greeting">
+                Hi {{FRIEND_NAME}},
+              </p>
+
+              <p class="body-copy">
+                <span class="inviter">{{INVITER_NAME}}</span>
+                has invited you to join TripAgent — a private travel service
+                designed around the way you want to travel.
+                From flights and hotels to visas and personalised planning,
+                we take care of the details so you can focus on what matters
+                most — the journey.
+              </p>
+
+              <div class="cta-wrap">
+
+                <div class="cta-label">
+                  Your journey can start here.
+                </div>
+
+                
+                  href="{{INVITATION_URL}}"
+                  class="cta"
+                  target="_blank"
+                >
+                  Explore TripAgent&nbsp; →
+                </a>
+
+              </div>
+
+            </td>
+          </tr>
+
+          <tr>
+            <td class="section">
+
+              <h2 class="section-title">
+                Travel, handled personally.
+              </h2>
+
+              <p class="section-intro">
+                Flights, hotels, visas and the details in between —
+                arranged around you, with one advisor who knows your journey.
+              </p>
+
+              <table role="presentation" width="100%">
+                <tr>
+
+                  <td class="service">
+
+                    <div class="service-icon">
+                      ✈
+                    </div>
+
+                    <div class="service-title">
+                      Flights
+                    </div>
+
+                    <div class="service-text">
+                      Global fares, carefully selected around your plans.
+                    </div>
+
+                  </td>
+
+                  <td class="service">
+
+                    <div class="service-icon">
+                      ◇
+                    </div>
+
+                    <div class="service-title">
+                      Hotels
+                    </div>
+
+                    <div class="service-text">
+                      Beautiful stays, booked around how you like to travel.
+                    </div>
+
+                  </td>
+
+                  <td class="service">
+
+                    <div class="service-icon">
+                      ◎
+                    </div>
+
+                    <div class="service-title">
+                      Visas
+                    </div>
+
+                    <div class="service-text">
+                      Paperwork handled, checked and tracked.
+                    </div>
+
+                  </td>
+
+                </tr>
+              </table>
+
+            </td>
+          </tr>
+
+          <tr>
+            <td class="section">
+
+              <div class="invitation-box">
+
+                <table role="presentation" width="100%">
+                  <tr>
+
+                    <td class="invitation-content">
+
+                      <table role="presentation" width="100%">
+                        <tr>
+
+                          <td class="gift-icon">
+                            ♢
+                          </td>
+
+                          <td>
+
+                            <div class="eyebrow">
+                              Your invitation
+                            </div>
+
+                            <h3 class="invitation-title">
+                              Invited by {{INVITER_NAME}}
+                            </h3>
+
+                            <p class="invitation-text">
+                              As a new TripAgent traveller, you'll receive
+                              exclusive travel perks when you join.
+                            </p>
+
+                            
+                              href="{{INVITATION_URL}}"
+                              class="small-cta"
+                              target="_blank"
+                            >
+                              Accept invitation&nbsp; →
+                            </a>
+
+                          </td>
+
+                        </tr>
+                      </table>
+
+                    </td>
+
+                    <td class="invitation-photo">
+                      <img
+                        src="https://images.unsplash.com/photo-1530789253388-582c481c54b0?auto=format&fit=crop&w=500&q=85"
+                        alt="Beautiful travel destination"
+                      />
+                    </td>
+
+                  </tr>
+                </table>
+
+              </div>
+
+            </td>
+          </tr>
+
+          <tr>
+            <td class="footer">
+
+              <div class="footer-brand">
+                TripAgent
+              </div>
+
+              <div class="footer-subtitle">
+                Private travel, personally arranged
+              </div>
+
+              <div class="footer-copy">
+                You received this email because
+                {{INVITER_NAME}} invited you to explore TripAgent.
+                <br /><br />
+
+                © TripAgent
+                &nbsp;·&nbsp;
+                
+                  href="{{TRIPAGENT_URL}}"
+                  style="color:#762d3d;"
+                >
+                  Visit TripAgent
+                </a>
+                &nbsp;·&nbsp;
+                
+                  href="{{UNSUBSCRIBE_URL}}"
+                  style="color:#762d3d;"
+                >
+                  Unsubscribe
+                </a>
+              </div>
+
+            </td>
+          </tr>
+
+        </table>
+
+      </td>
+    </tr>
+  </table>
+
+</body>
+</html>
