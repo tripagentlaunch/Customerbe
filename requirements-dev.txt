@@ -1,5 +1,0 @@
-# Dev/test-only dependencies for the Anaya V6 test suite (tests/anaya_v6/).
-# Install with: pip install -r requirements.txt -r requirements-dev.txt
--r requirements.txt
-pytest
-pytest-asyncio
