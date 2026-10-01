@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import re
 import secrets
@@ -304,11 +305,21 @@ async def create_invitation_code(
     }
 
 
-def get_invite_status(code: str) -> dict:
+async def get_invite_status(code: str) -> dict:
     """Read-only peek at an invite code — does NOT consume it. 404-shaped
-    dict when the code doesn't exist."""
+    dict when the code doesn't exist.
+
+    ASYNC (2026-10-01, direct request): wraps the blocking Supabase SDK
+    call in asyncio.to_thread so this genuinely runs off the event loop,
+    rather than just adding the async keyword over a still-blocking call
+    (which would be a regression vs. FastAPI's existing thread-pool
+    behavior for plain def routes)."""
     client = _require_client()
-    rows = client.table("site_invitation_codes").select("code,label,status,created_at").eq("code", code).execute().data
+    rows = (
+        await asyncio.to_thread(
+            client.table("site_invitation_codes").select("code,label,status,created_at").eq("code", code).execute
+        )
+    ).data
     if not rows:
         return {"found": False}
     row = rows[0]

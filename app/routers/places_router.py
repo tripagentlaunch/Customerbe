@@ -23,7 +23,13 @@ async def lookup(name: str, city: str):
         "lon": result["lon"],
         "attribution": result["attribution"],
         # Same-origin proxy path — never the raw Google URL/key.
-        "photo_url": f"/api/places/photo?ref={quote(result['photo_ref'], safe='')}",
+        # Pexels fallback (2026-09-30) already carries a real, direct,
+        # public URL (result["photo_url"]) — proxying it through our own
+        # /api/places/photo would be pointless (no API key to hide) and
+        # that endpoint only knows how to fetch Google photo_refs anyway.
+        # A genuine Google match still gets the same same-origin proxy
+        # link as before.
+        "photo_url": result.get("photo_url") or f"/api/places/photo?ref={quote(result['photo_ref'], safe='')}",
     }
 
 
