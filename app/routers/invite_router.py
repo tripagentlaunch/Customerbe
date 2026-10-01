@@ -8,7 +8,7 @@ router = APIRouter(prefix="/invite", tags=["invite"])
 @router.get("/{code}")
 async def invite_status(code: str):
     try:
-        status = invite_service.get_invite_status(code.strip().upper())
+        status = await invite_service.get_invite_status(code.strip().upper())
     except RuntimeError as exc:
         raise HTTPException(status_code=500, detail=str(exc))
     if not status["found"]:

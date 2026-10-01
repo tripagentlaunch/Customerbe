@@ -23,7 +23,58 @@ async def lookup(name: str, city: str):
         "lon": result["lon"],
         "attribution": result["attribution"],
         # Same-origin proxy path — never the raw Google URL/key.
-        "photo_url": f"/api/places/photo?ref={quote(result['photo_ref'], safe='')}",
+        # Pexels fallback (2026-09-30) already carries a real, direct,
+        # public URL (result["photo_url"]) — proxying it through our own
+        # /api/places/photo would be pointless (no API key to hide) and
+        # that endpoint only knows how to fetch Google photo_refs anyway.
+        # A genuine Google match still gets the same same-origin proxy
+        # link as before.
+        "photo_url": result.get("photo_url") or f"/api/places/photo?ref={quote(result['photo_ref'], safe='')}",
+    }
+
+
+@router.get("/lookup-with-photo")
+async def lookup_with_photo(name: str, city: str):
+    """Same as /lookup, but the photo is fetched server-side and returned
+    inline as a base64 data URL — collapses the frontend's two sequential
+    requests (search, then a separate photo fetch) into one round trip.
+    Returns {"found": false} on no match, same as /lookup."""
+    result = await places_service.lookup_place_with_photo(name, city)
+    if result is None:
+        return {"found": False}
+    return {
+        "found": True,
+        "place_name": result["place_name"],
+        "lat": result["lat"],
+        "lon": result["lon"],
+        "attribution": result["attribution"],
+        "photo_url": result["photo_data_url"],
+    }
+
+
+@router.get("/nearby")
+async def nearby(city: str, category: str):
+    """Live category search ("hotels", "attractions", "restaurants") for a
+    city — powers the interactive explore-map view. Returns a list, empty
+    on any failure/missing key/unknown category, never fabricated."""
+    results = await places_service.search_nearby(city, category)
+    return {
+        "results": [
+            {
+                "place_name": r["place_name"],
+                "lat": r["lat"],
+                "lon": r["lon"],
+                "rating": r["rating"],
+                "rating_count": r["rating_count"],
+                "category": r["category"],
+                "photo_url": (
+                    f"/api/places/photo?ref={quote(r['photo_ref'], safe='')}"
+                    if r["photo_ref"]
+                    else None
+                ),
+            }
+            for r in results
+        ]
     }
 
 

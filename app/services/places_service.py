@@ -58,6 +58,7 @@ import asyncio
 import httpx
 
 from app.config import settings
+from app.services import pexels_service
 
 _GENERIC_WORDS = {
     "the", "and", "of", "a", "an", "in", "at", "near", "hotel", "hotels",
@@ -70,6 +71,7 @@ _GENERIC_WORDS = {
 _client: Optional[httpx.AsyncClient] = None
 
 
+
 async def _get_shared_client() -> httpx.AsyncClient:
     global _client
     if _client is None or _client.is_closed:
@@ -77,18 +79,21 @@ async def _get_shared_client() -> httpx.AsyncClient:
     return _client
 
 
-def _distinctive_terms(name: str) -> list[str]:
+async def _distinctive_terms(name: str) -> list[str]:
+    # ASYNC (2026-10-01, direct request) — pure string logic, no I/O to
+    # actually await. Converted for consistency across this file's
+    # functions, not for a performance reason (there is none here).
     words = re.findall(r"[A-Za-z']+", name or "")
     distinctive = [w.lower() for w in words if len(w) > 2 and w.lower() not in _GENERIC_WORDS]
     return distinctive or [w.lower() for w in words if w]
 
 
-def _is_relevant_match(query: str, place_display_name: str) -> bool:
+async def _is_relevant_match(query: str, place_display_name: str) -> bool:
     """True only if the query's own distinctive word(s) appear in what
     Places itself calls the place — never accepted on a bare top-result
     (see this module's docstring for why that's unsafe)."""
     name_lower = (place_display_name or "").lower()
-    terms = _distinctive_terms(query)
+    terms = await _distinctive_terms(query)
     if not terms:
         return False
     return any(term in name_lower for term in terms)
@@ -159,30 +164,53 @@ async def lookup_place(name: str, city: str) -> Optional[dict]:
         # request, not remembered as "not found" even for a few minutes.
         return None
 
+    async def _fallback():
+        # Pexels city-photo fallback (2026-09-30, direct request: guide-
+        # panel items whose Google Places search finds no real match were
+        # showing a blank placeholder). Honest generic photo of the CITY,
+        # never claimed to be this specific venue — a real photo beats an
+        # empty placeholder, but never a fabricated match.
+        pexels = await pexels_service.get_city_stock_photo(city or name)
+        if not pexels:
+            return None
+        return {
+            "place_name": name,
+            "lat": None,
+            "lon": None,
+            "photo_ref": None,
+            "photo_url": pexels["url"],
+            "attribution": pexels.get("photographer"),
+            "source": "pexels",
+        }
+
     places = data.get("places") or []
     if not places:
-        _CACHE[cache_key] = (now + _CACHE_TTL_SECONDS, None)
-        return None
+        result = await _fallback()
+        _CACHE[cache_key] = (now + _CACHE_TTL_SECONDS, result)
+        return result
 
     place = places[0]
     place_display_name = (place.get("displayName") or {}).get("text") or ""
-    if not _is_relevant_match(name, place_display_name):
+    if not await _is_relevant_match(name, place_display_name):
         print(f"[PLACES] rejected irrelevant match for {query!r}: top result was {place_display_name!r}")
-        _CACHE[cache_key] = (now + _CACHE_TTL_SECONDS, None)
-        return None
+        result = await _fallback()
+        _CACHE[cache_key] = (now + _CACHE_TTL_SECONDS, result)
+        return result
 
     photos = place.get("photos") or []
     if not photos:
-        _CACHE[cache_key] = (now + _CACHE_TTL_SECONDS, None)
-        return None
+        result = await _fallback()
+        _CACHE[cache_key] = (now + _CACHE_TTL_SECONDS, result)
+        return result
 
     photo_name = photos[0].get("name")
     location = place.get("location") or {}
     lat = location.get("latitude")
     lon = location.get("longitude")
     if not photo_name or lat is None or lon is None:
-        _CACHE[cache_key] = (now + _CACHE_TTL_SECONDS, None)
-        return None
+        result = await _fallback()
+        _CACHE[cache_key] = (now + _CACHE_TTL_SECONDS, result)
+        return result
 
     author_attributions = photos[0].get("authorAttributions") or []
     attribution = author_attributions[0].get("displayName") if author_attributions else None

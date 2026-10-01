@@ -101,6 +101,64 @@ def _is_relevant_match(alt_text: str, hotel_name: str) -> bool:
     return any(term in alt_lower for term in terms)
 
 
+# Separate cache from _CACHE above (keyed by hotel_name+city) — this one's
+# keyed by city alone, since it's a genuinely generic "some real photo of
+# this city" fallback, not a claim about any specific venue.
+_CITY_CACHE: dict = {}
+
+
+async def get_city_stock_photo(city: Optional[str]) -> Optional[dict]:
+    """Returns {"url", "photographer", "photographerUrl", "source": "pexels"}
+    for a GENERIC photo of `city` — no per-venue relevance check, unlike
+    get_hotel_specific_photo above, since this is never claiming to be a
+    specific place, only "a real photo of this city" (2026-09-30, direct
+    request: city guide-panel items whose Google Places search finds no
+    match get a real photo instead of a blank placeholder). Returns None
+    on a missing API key, empty city, or a search that genuinely returns
+    nothing — the caller falls back to its existing placeholder either
+    way, never a fabricated URL."""
+    city = (city or "").strip()
+    if not city:
+        return None
+    if not settings.pexels_api_key:
+        return None
+
+    now = time.time()
+    cached = _CITY_CACHE.get(city)
+    if cached is not None and cached[0] > now:
+        return cached[1]
+    if cached is not None:
+        del _CITY_CACHE[city]
+
+    try:
+        async with httpx.AsyncClient(timeout=8.0) as client:
+            response = await client.get(
+                PEXELS_SEARCH_URL,
+                params={"query": city, "per_page": 5, "orientation": "landscape"},
+                headers={"Authorization": settings.pexels_api_key},
+            )
+        response.raise_for_status()
+        data = response.json()
+    except (httpx.HTTPError, ValueError) as exc:
+        print(f"[PEXELS] city search failed for {city!r}: {type(exc).__name__}: {exc}")
+        return None
+
+    photos = data.get("photos") or []
+    if not photos:
+        _CITY_CACHE[city] = (now + _CACHE_TTL_SECONDS, None)
+        return None
+
+    photo = photos[0]
+    result = {
+        "url": photo["src"]["large"],
+        "photographer": photo.get("photographer"),
+        "photographerUrl": photo.get("photographer_url"),
+        "source": "pexels",
+    }
+    _CITY_CACHE[city] = (now + _CACHE_TTL_SECONDS, result)
+    return result
+
+
 async def get_hotel_specific_photo(hotel_name: Optional[str], city: Optional[str]) -> Optional[dict]:
     """Returns {"url", "photographer", "photographerUrl", "source": "pexels"}
     ONLY when Pexels returns a photo genuinely relevant to THIS hotel (see
