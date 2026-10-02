@@ -80,6 +80,14 @@ else:
             # same "add it here once deployed" note as the React app above.
             "http://localhost:3000",
         ],
+        # Vercel preview deployments for this project get a fresh,
+        # randomly-generated subdomain on every deploy (e.g.
+        # customerfe-3s1wwyrsr-trip-agent.vercel.app) — a fixed list can't
+        # keep up. This regex allows ANY subdomain ending in
+        # '-trip-agent.vercel.app', covering every preview/production URL
+        # Vercel generates for this project without needing a manual
+        # update each deploy.
+        allow_origin_regex=r"^https://[a-zA-Z0-9-]+-trip-agent\.vercel\.app$",
         allow_methods=["*"],
         allow_headers=["*"],
     )
