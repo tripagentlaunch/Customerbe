@@ -1,3 +1,4 @@
+from typing import Optional
 import httpx
 from app.config import settings
 

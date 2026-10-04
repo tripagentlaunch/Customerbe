@@ -11,7 +11,7 @@ from app.routers.ai_router_v2 import router as ai_router_v2
 from app.routers.ai_router_v3 import router as ai_router_v3
 from app.routers.ai_router_v4 import router as ai_router_v4
 from app.routers.ai_router_v5 import router as ai_router_v5
-from app.routers.ai_router_v6 import router as ai_router_v6
+# from app.routers.ai_router_v6 import router as ai_router_v6  # disabled: Anaya not in use yet
 from app.routers.enquiry_router import router as enquiry_router
 from app.routers.cities_router import router as cities_router
 from app.routers.flight_router import router as flight_router
@@ -104,7 +104,7 @@ app.include_router(ai_router_v2)
 app.include_router(ai_router_v3)
 app.include_router(ai_router_v4)
 app.include_router(ai_router_v5)
-app.include_router(ai_router_v6)
+# app.include_router(ai_router_v6)  # disabled: Anaya not in use yet
 app.include_router(whatsapp_router_v6)
 app.include_router(internal_router)
 app.include_router(enquiry_router)

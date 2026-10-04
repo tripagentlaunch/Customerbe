@@ -1,3 +1,4 @@
+from typing import Optional
 """
 TripAgent backend — app/services/places_service.py
 
@@ -52,7 +53,7 @@ PERFORMANCE (2026-09-28): two changes to cut real, non-caching latency:
 """
 import re
 import time
-from typing import Optional
+from typing import Optional, Optional
 
 import asyncio
 import httpx

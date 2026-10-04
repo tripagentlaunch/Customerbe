@@ -1,3 +1,4 @@
+from typing import Optional
 """Aanya v3 — a new conversational engine built DIRECTLY from the
 CONVERSATION-SPECIFIC sections of TripAgent_Master_AI_Travel_Agent_End_to_
 End_Development_Blueprint.docx:
@@ -186,7 +187,7 @@ def _parse_date_safe(value):
 
 
 class FlowResult:
-    def __init__(self, text: str, handoff: dict | None = None):
+    def __init__(self, text: str, handoff: Optional[dict] = None):
         self.text = text
         self.handoff = handoff
 
@@ -436,7 +437,7 @@ def _profile_summary(profile: dict) -> str:
     return "\n".join(lines) if lines else "(nothing known yet — this is the customer's first message)"
 
 
-def _mode_instruction(mode: str, target_field: str | None, reason: str | None, intent: str) -> str:
+def _mode_instruction(mode: str, target_field: Optional[str], reason: Optional[str], intent: str) -> str:
     if mode == "clarify_invalid":
         return (
             f"The merged trip information has a problem: {reason}. Point this out naturally and "
@@ -514,8 +515,8 @@ def _analyze_system_prompt(profile: dict, today: date) -> str:
 
 
 def _reply_system_prompt(
-    profile: dict, intent: str, mode: str, target_field: str | None,
-    reason: str | None, direct_question: bool, today: date,
+    profile: dict, intent: str, mode: str, target_field: Optional[str],
+    reason: Optional[str], direct_question: bool, today: date,
 ) -> str:
     today_str = today.strftime("%A, %d %B %Y")
     instruction = _mode_instruction(mode, target_field, reason, intent)
@@ -548,7 +549,7 @@ def _build_messages(history: list[dict], user_text: str) -> list[dict]:
     return messages
 
 
-def _extract_tool_input(response, name: str) -> dict | None:
+def _extract_tool_input(response, name: str) -> Optional[dict]:
     for block in response.content:
         if block.type == "tool_use" and block.name == name:
             return dict(block.input or {})

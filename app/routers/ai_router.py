@@ -1,3 +1,4 @@
+from typing import Optional
 import logging
 import re
 import uuid
@@ -53,7 +54,7 @@ async def _maybe_create_enquiry(session: SessionState) -> None:
         _log.error("[AI_CONCIERGE] enquiry summarization/write failed: %s: %s", type(exc).__name__, exc)
 
 
-async def _maybe_update_enquiry(session: SessionState, enquiry_update: dict | None) -> None:
+async def _maybe_update_enquiry(session: SessionState, enquiry_update: Optional[dict]) -> None:
     """Applies a substantive post-handoff message to the ALREADY-CREATED
     enquiry row (aanya_flow.py's _post_handoff_reply) — never a second row.
     A no-op if the flow hasn't produced an update this turn, or (a genuine

@@ -1,3 +1,5 @@
+from __future__ import annotations
+from typing import Optional
 """Phase 2 — the hotel booking/cancellation conversational state machine:
 selection -> live re-verification -> guest details -> confirmation ->
 (re-verify once more) -> execution -> verification -> persistence.
@@ -18,7 +20,6 @@ from the model's own account of what the customer said — narrower word
 list.
 """
 
-from __future__ import annotations
 
 import logging
 import re
@@ -96,7 +97,7 @@ def is_rejection(text: str, action_type: str = "booking") -> bool:
     return bool(_negate_re_for(action_type).search(stripped)) and not is_confirmation(text, action_type)
 
 
-def match_hotel_selection(user_text: str, hotel_options: dict) -> dict | None:
+def match_hotel_selection(user_text: str, hotel_options: dict) -> Optional[dict]:
     """`hotel_options` is `state.search_results["hotel"]` —
     {base_name: {"ranked": [...], "token", "doc_key"}}. Matches a tier name
     ("best value"/"premium"/"best match") or a hotel name substring; if the
@@ -247,7 +248,7 @@ async def _advance_booking_collection(state) -> dict:
     return {"mode": "propose_hotel_booking", "tool_results": {"booking_summary": _summary_from_pending(pending)}}
 
 
-def _apply_guest_answer(pending: dict, user_text: str) -> str | None:
+def _apply_guest_answer(pending: dict, user_text: str) -> Optional[str]:
     """Same validation patterns js/hotel-search.js's own guest form already
     uses. Returns an error message to re-ask with, or None on success."""
     field_name = pending.get("awaiting_guest_field")
@@ -314,7 +315,7 @@ async def start_hotel_cancellation(state, booking: dict) -> dict:
 _NEEDS_RECONCILIATION_STATES = {ApprovalState.CUSTOMER_CONFIRMED.value, ApprovalState.EXECUTING.value}
 
 
-async def handle_pending_action_turn(state, task, user_text: str) -> dict | None:
+async def handle_pending_action_turn(state, task, user_text: str) -> Optional[dict]:
     pending = state.pending_action
     if not pending:
         return None

@@ -1,3 +1,4 @@
+from typing import Optional
 """Aanya v2 — a free-running conversational trip-discovery engine, built
 DIRECTLY from TripAgent_Human_Like_AI_Travel_Agent_Spec_and_Claude_Prompt.docx
 (Section 3's trip-state model, Section 4's conversation style, Section 5's
@@ -59,7 +60,7 @@ TRIP_STATE_FIELDS = (
 
 
 class FlowResult:
-    def __init__(self, text: str, handoff: dict | None = None):
+    def __init__(self, text: str, handoff: Optional[dict] = None):
         self.text = text
         self.handoff = handoff
 
@@ -404,7 +405,7 @@ def _build_messages(history: list[dict], user_text: str) -> list[dict]:
     return messages
 
 
-def _compute_nights(start: str, end: str) -> int | None:
+def _compute_nights(start: str, end: str) -> Optional[int]:
     try:
         d1 = date.fromisoformat(start)
         d2 = date.fromisoformat(end)
@@ -488,7 +489,7 @@ async def advance(session: SessionState, user_text: str) -> FlowResult:
 # ---------------------------------------------------------------------------
 
 
-def _fmt_travel_window(fields: dict) -> str | None:
+def _fmt_travel_window(fields: dict) -> Optional[str]:
     start = fields.get("start_date")
     end = fields.get("end_date")
     if start and end:
@@ -500,14 +501,14 @@ def _fmt_travel_window(fields: dict) -> str | None:
     return None
 
 
-def _fmt_trip_length(fields: dict) -> str | None:
+def _fmt_trip_length(fields: dict) -> Optional[str]:
     nights = fields.get("duration_nights")
     if not nights:
         return None
     return f"{nights} night{'s' if nights != 1 else ''}"
 
 
-def _fmt_budget(fields: dict) -> str | None:
+def _fmt_budget(fields: dict) -> Optional[str]:
     return chat_enquiry_service.format_budget_inr(
         fields.get("budget_amount"), fields.get("budget_currency"), fields.get("budget_per_person")
     )

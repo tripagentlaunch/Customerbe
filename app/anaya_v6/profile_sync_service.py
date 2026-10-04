@@ -1,3 +1,5 @@
+from __future__ import annotations
+from typing import Optional
 """Phase 4C — persists Anaya's EXISTING structured extraction (the
 `diff` dict `orchestrator.handle_turn` already computes from
 `context_manager.analyze_turn`'s output — see the Phase 4B blueprint §11)
@@ -32,7 +34,6 @@ the Phase 4C final report for this as a named, deliberate gap, not an
 oversight.
 """
 
-from __future__ import annotations
 
 import logging
 
@@ -153,7 +154,7 @@ def sync_profile(state, diff: dict, user_text: str) -> None:
         _apply_member_preferences(state.member_id, pref_fields)
 
 
-def _write_trip_scoped_facts(state, trip_fields: dict, trip_specific_prefs: dict | None) -> None:
+def _write_trip_scoped_facts(state, trip_fields: dict, trip_specific_prefs: Optional[dict]) -> None:
     """Phase 4D — an advisor may close `state.enquiry_id` between turns
     (a real, observed gap: Anaya must never write into a closed enquiry,
     per Phase 4C's own requirement, even one it opened itself). If the

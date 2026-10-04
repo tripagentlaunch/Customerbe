@@ -1,3 +1,4 @@
+from typing import Optional
 """POST /ai/concierge/chat/v2 — Aanya v2, the free-running conversational
 engine built directly from TripAgent_Human_Like_AI_Travel_Agent_Spec_and_
 Claude_Prompt.docx (see aanya_flow_v2.py's module docstring).

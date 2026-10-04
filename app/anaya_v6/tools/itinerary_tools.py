@@ -1,3 +1,5 @@
+from __future__ import annotations
+from typing import Optional
 """Day-by-day itinerary generation — does not exist anywhere else in this
 codebase (confirmed: no itinerary_service.py anywhere, and aanya_flow v2-v5
 explicitly say a human advisor builds this today). This is advisory/
@@ -9,7 +11,6 @@ text; those stay as "your hotel"/"your flight" placeholders until
 compare_tools has picked a real, live result.
 """
 
-from __future__ import annotations
 
 import logging
 
@@ -74,8 +75,8 @@ day for a multi-city trip is called out explicitly. Call record_itinerary exactl
 
 
 async def itinerary_generate(
-    gateway: ModelGateway, *, destination: str, nights: int, traveller_type: str | None = None,
-    interests: str | None = None, hotel_bases: list[str] | None = None,
+    gateway: ModelGateway, *, destination: str, nights: int, traveller_type: Optional[str] = None,
+    interests: Optional[str] = None, hotel_bases: list[str] | None = None,
 ) -> dict:
     """Returns {"days": [...], "hotel_bases": [{"city","nights"}, ...]}, or
     an empty dict on a model failure — the caller must treat that as "try

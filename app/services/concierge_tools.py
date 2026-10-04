@@ -1,3 +1,4 @@
+from typing import Optional
 """Tool definitions and executors for Aanya's flight/hotel/visa concierge tools.
 
 Money-safety boundary (team decision, see chat history — Dhruv's autonomy-vs-

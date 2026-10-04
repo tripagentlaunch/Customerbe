@@ -1,3 +1,5 @@
+from __future__ import annotations
+from typing import Optional
 """Approval gating, per the build brief: searching/planning/recommendation
 need no confirmation; booking/payment/cancellation always do; modification
 depends on policy. Phase 1 has no mutating tools wired to real execution
@@ -8,7 +10,6 @@ instead of attempting the action. Real approval-collection UX (the
 customer explicitly confirming one specific booking/payment) is Phase 2.
 """
 
-from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import Enum
@@ -53,11 +54,11 @@ class ApprovalState(str, Enum):
 @dataclass
 class ApprovalDecision:
     auto_approved: bool
-    message: str | None = None
-    state: ApprovalState | None = None
+    message: Optional[str] = None
+    state: Optional[ApprovalState] = None
 
 
-def check(spec: ToolSpec, pending_action: dict | None = None) -> ApprovalDecision:
+def check(spec: ToolSpec, pending_action: Optional[dict] = None) -> ApprovalDecision:
     """`pending_action` (new in Phase 2) is the trip's own
     `anaya_trip_state.pending_action` record — see orchestrator.py's booking
     flow. A mutating tool is auto-approved ONLY when a pending_action for

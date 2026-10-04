@@ -1,3 +1,4 @@
+from typing import Optional
 from pydantic import BaseModel
 
 
@@ -20,8 +21,8 @@ class ReferralCreateRequest(BaseModel):
 
     friend_name: str
     friend_email: str
-    friend_phone: str | None = None
-    friend_country_code: str | None = None
+    friend_phone: Optional[str] = None
+    friend_country_code: Optional[str] = None
 
 
 class ReferralCreateResponse(BaseModel):

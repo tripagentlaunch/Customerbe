@@ -1,3 +1,4 @@
+from typing import Optional
 from fastapi import APIRouter, Body, HTTPException
 
 from app.services import invite_service

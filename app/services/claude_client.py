@@ -1,3 +1,4 @@
+from typing import Optional
 """Claude-backed brain for Aanya, the TripAgent concierge.
 
 Tool use: the chat itself can search real flights and hotels and check visa

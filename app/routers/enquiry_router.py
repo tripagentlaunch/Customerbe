@@ -1,3 +1,4 @@
+from typing import Optional
 import logging
 
 from fastapi import APIRouter, Header, HTTPException
@@ -9,7 +10,7 @@ router = APIRouter(prefix="/enquiries", tags=["enquiries"])
 _log = logging.getLogger("enquiry_router")
 
 
-def _extract_bearer(authorization: str | None) -> str:
+def _extract_bearer(authorization: Optional[str]) -> str:
     if not authorization or not authorization.lower().startswith("bearer "):
         raise HTTPException(status_code=401, detail="missing_session")
     token = authorization.split(" ", 1)[1].strip()
@@ -19,7 +20,7 @@ def _extract_bearer(authorization: str | None) -> str:
 
 
 @router.post("", response_model=EnquiryCreateResponse)
-async def create_enquiry(payload: EnquiryCreateRequest, authorization: str | None = Header(default=None)):
+async def create_enquiry(payload: EnquiryCreateRequest, authorization: Optional[str] = Header(default=None)):
     token = _extract_bearer(authorization)
     try:
         row = enquiry_service.create_enquiry(token, payload)

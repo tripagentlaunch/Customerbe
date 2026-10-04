@@ -1,3 +1,5 @@
+from __future__ import annotations
+from typing import Optional
 """POST /ai/concierge/v6/whatsapp — the SAME Anaya core (orchestrator.
 handle_turn, the same planner/tools/approvals/trip_memory as the web
 endpoint) reached through a channel-agnostic message shape. This is the
@@ -13,7 +15,6 @@ unification point a future cutover would point at, not that cutover
 itself.
 """
 
-from __future__ import annotations
 
 import logging
 import os
@@ -40,7 +41,7 @@ class WhatsAppInboundMessage(BaseModel):
 class WhatsAppReply(BaseModel):
     to_number: str
     bubbles: list[str]
-    handoff: dict | None = None
+    handoff: Optional[dict] = None
 
 
 def _kill_switch_enabled() -> bool:

@@ -1,3 +1,5 @@
+from __future__ import annotations
+from typing import Optional
 """The LLM-proposes / backend-validates / tool-executes / verified-result
 pipeline the build brief requires: "LLM proposes action -> backend
 validates -> tool executes -> verified result -> LLM explains result."
@@ -13,12 +15,11 @@ invent" guarantee: any price/name/rating in a reply must trace to a row
 here.
 """
 
-from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Any
+from typing import Optional, Any
 
 from app.anaya_v6 import approval_manager
 from app.anaya_v6.tool_registry import get_tool
@@ -43,11 +44,11 @@ class ActionResult:
     tool_name: str
     ok: bool
     result: Any = None
-    error: str | None = None
-    error_detail: str | None = None
+    error: Optional[str] = None
+    error_detail: Optional[str] = None
     approval_required: bool = False
-    approval_message: str | None = None
-    approval_state: str | None = None
+    approval_message: Optional[str] = None
+    approval_state: Optional[str] = None
 
 
 def _json_safe(value: Any) -> Any:
@@ -56,7 +57,7 @@ def _json_safe(value: Any) -> Any:
     return str(value)
 
 
-def _log_execution(trip_id: str | None, tool_name: str, kwargs: dict, output: Any, validated: bool, error: str | None) -> None:
+def _log_execution(trip_id: Optional[str], tool_name: str, kwargs: dict, output: Any, validated: bool, error: Optional[str]) -> None:
     client = get_supabase_admin_client()
     if client is None or not trip_id:
         return
@@ -75,7 +76,7 @@ def _log_execution(trip_id: str | None, tool_name: str, kwargs: dict, output: An
 
 
 async def propose_and_execute(
-    tool_name: str, *, trip_id: str | None = None, pending_action: dict | None = None, **kwargs,
+    tool_name: str, *, trip_id: Optional[str] = None, pending_action: Optional[dict] = None, **kwargs,
 ) -> ActionResult:
     spec = get_tool(tool_name)
     if spec is None:

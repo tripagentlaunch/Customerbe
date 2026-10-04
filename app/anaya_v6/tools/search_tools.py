@@ -1,3 +1,5 @@
+from __future__ import annotations
+from typing import Optional
 """Real, non-mutating search tools — flight_search and hotel_search. Wraps
 app.services.hotel_service / flight_service directly (unmodified); payload
 shape and TripSure envelope-unwrapping logic is ported from
@@ -15,7 +17,6 @@ surface honestly (see action_manager.py) rather than substituting a made-up
 result.
 """
 
-from __future__ import annotations
 
 import logging
 import uuid
@@ -37,7 +38,7 @@ _COUNTRY_NAMES = {
 
 
 class ToolError(Exception):
-    def __init__(self, message: str, detail: str | None = None):
+    def __init__(self, message: str, detail: Optional[str] = None):
         super().__init__(message)
         self.message = message
         self.detail = detail
@@ -179,8 +180,8 @@ async def hotel_price_check(*, hotel_key: str, token: str, doc_key: str, booking
 
 
 async def flight_search(
-    *, origin: str | None, destination: str | None, departure_date: str | None,
-    return_date: str | None = None, adults: int = 1, children: int = 0, infants: int = 0,
+    *, origin: Optional[str], destination: Optional[str], departure_date: Optional[str],
+    return_date: Optional[str] = None, adults: int = 1, children: int = 0, infants: int = 0,
     cabin_class: str = "Economy",
 ) -> dict:
     """Real TripSure flight search. cabin_class is Anaya's own

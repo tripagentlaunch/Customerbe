@@ -1,3 +1,4 @@
+from typing import Optional
 """POST /ai/concierge/chat/v5 — Aanya v5: same architecture as v4, but hand-
 off is hard-gated on every field genuinely needed to search/book (see
 aanya_flow_v5.py's own module docstring for the full contract).

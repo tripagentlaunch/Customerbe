@@ -1,3 +1,5 @@
+from typing import Optional
+from typing import Optional
 import asyncio
 import logging
 import re
@@ -134,7 +136,7 @@ def _get_session_issuer_client():
     return create_client(settings.supabase_url, settings.supabase_service_role_key)
 
 
-def _issue_session_for_new_auth_user(email: str, hashed_token: str) -> dict | None:
+def _issue_session_for_new_auth_user(email: str, hashed_token: str) -> Optional[dict]:
     """Redeems a magic-link token for a real access/refresh token pair, via
     _get_session_issuer_client() — never the shared admin client from
     _require_client() (see that function's docstring for why: verify_otp()
@@ -188,13 +190,13 @@ def _find_auth_user_by_email(client, email: str):
 async def create_invitation_code(
     recipient_name: str,
     recipient_email: str,
-    referrer_name: str | None = None,
+    referrer_name: Optional[str] = None,
     *,
     send_email: bool = True,
-    access_request_id: str | None = None,
-    referred_by_member_id: str | None = None,
-    friend_phone: str | None = None,
-    custom_code: str | None = None,
+    access_request_id: Optional[str] = None,
+    referred_by_member_id: Optional[str] = None,
+    friend_phone: Optional[str] = None,
+    custom_code: Optional[str] = None,
 ) -> dict:
     """Single choke point for every issuance path — the curated admin invite
     (admin_router.py's /invite-customer) and the approved-access-request path
@@ -353,7 +355,7 @@ def _pull_access_request_details(client, access_request_id: str) -> dict:
     }
 
 
-def redeem_invite(code: str, details: dict | None = None) -> dict:
+def redeem_invite(code: str, details: Optional[dict] = None) -> dict:
     """Validates + redeems a one-time invite code, port of
     supabase/functions/site-redeem/index.ts against this proxy's own Supabase
     project (gnifmusartvwngcuquou) instead of the site's. Returns the shape
@@ -532,7 +534,7 @@ def redeem_invite(code: str, details: dict | None = None) -> dict:
     }
 
 
-def _normalize_whatsapp(raw: str) -> str | None:
+def _normalize_whatsapp(raw: str) -> Optional[str]:
     """Best-effort E.164 normalization: strips spaces/dashes/parens, expands
     a leading '00' to '+', and assumes +91 for a bare 10-digit number (this
     site's audience is India-first — see CLAUDE.md). Returns None if the
@@ -804,7 +806,7 @@ def _invitation_approved_request_email_html(
 </html>"""
 
 
-async def _send_via_resend(to_email: str, subject: str, html: str) -> str | None:
+async def _send_via_resend(to_email: str, subject: str, html: str) -> Optional[str]:
     """Raises httpx.HTTPStatusError/RequestError on failure — the caller
     decides how to surface that (the code row is already committed either
     way, same trade-off the old send_invite_email() had). Returns Resend's

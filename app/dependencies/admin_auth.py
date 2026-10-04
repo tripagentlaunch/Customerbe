@@ -1,5 +1,6 @@
+from typing import Optional
+from typing import Optional, Optional
 import hmac
-
 from fastapi import Header, HTTPException
 
 from app.config import settings
@@ -7,7 +8,7 @@ from app.config import settings
 _ADMIN_KEY_HEADER = "X-Admin-Key"
 
 
-def require_admin_key(x_admin_key: str | None = Header(default=None, alias=_ADMIN_KEY_HEADER)) -> None:
+def require_admin_key(x_admin_key: Optional[str] = Header(default=None, alias=_ADMIN_KEY_HEADER)) -> None:
     """Shared-secret gate for the access-request review endpoints (GET
     .../pending, POST .../approve, POST .../deny) — closes the "anyone can
     call this" gap those endpoints were built with (see

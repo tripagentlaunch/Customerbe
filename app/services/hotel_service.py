@@ -1,3 +1,4 @@
+from typing import Optional
 import asyncio
 import json
 import logging
@@ -209,7 +210,7 @@ async def cancel_booking(ref: str, payload: dict, trace_id: str) -> dict:
         return resp.json()
 
 
-def _booking_summary(hotel_name: str | None, check_in: str | None, check_out: str | None) -> str:
+def _booking_summary(hotel_name: Optional[str], check_in: Optional[str], check_out: Optional[str]) -> str:
     if hotel_name and check_in and check_out:
         return f"{hotel_name} — {check_in} to {check_out}"
     if hotel_name:
@@ -310,7 +311,7 @@ def record_cancellation(partner_reference_id: str) -> None:
         _log.error("[HOTEL_ORDER_MIRROR] record_cancellation failed for ref %s: %s: %s", partner_reference_id, type(exc).__name__, exc)
 
 
-def find_photo_by_name(name: str) -> str | None:
+def find_photo_by_name(name: str) -> Optional[str]:
     """Backs GET /api/hotel/photo-lookup?name=X. Looks up a real TripSure
     photo by hotel name against hotel_snapshots — the same table
     get_snapshot() reads (see its docstring: populated by TRIPAGENT-FE's
@@ -341,7 +342,7 @@ def find_photo_by_name(name: str) -> str | None:
         return None
 
 
-def get_snapshot(hotel_key: str) -> dict | None:
+def get_snapshot(hotel_key: str) -> Optional[dict]:
     """Reads one hotel_snapshots row for the public GET /api/hotel/public/
     {hotel_key} route — the landing page a hotel name/photo in a Proposal
     PDF (TRIPAGENT-FE's Proposal Composer) links to. Display-only fields

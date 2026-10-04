@@ -1,3 +1,4 @@
+from typing import Optional
 import logging
 import re
 from datetime import datetime, timezone
@@ -95,12 +96,12 @@ def list_pending() -> list:
     return client.table("site_access_requests").select("*").eq("status", "pending").order("created_at", desc=True).execute().data or []
 
 
-def _get_request(client, request_id: str) -> dict | None:
+def _get_request(client, request_id: str) -> Optional[dict]:
     rows = client.table("site_access_requests").select("*").eq("id", request_id).execute().data
     return rows[0] if rows else None
 
 
-async def approve(request_id: str, reviewed_by: str | None = None) -> dict:
+async def approve(request_id: str, reviewed_by: Optional[str] = None) -> dict:
     """Approves one pending request: status='approved', reviewed_at=now(),
     then generates a real invite code for this person AND emails it to them
     via invite_service.create_invitation_code() — the SAME single choke
@@ -141,7 +142,7 @@ async def approve(request_id: str, reviewed_by: str | None = None) -> dict:
     return {"ok": True, **invite}
 
 
-def deny(request_id: str, reviewed_by: str | None = None, decline_reason: str | None = None) -> dict:
+def deny(request_id: str, reviewed_by: Optional[str] = None, decline_reason: Optional[str] = None) -> dict:
     """Denies one pending request: status='denied', reviewed_at=now(),
     optional free-text decline_reason (site_access_requests.decline_reason,
     "for future use (Phase C+ denial workflow)" per the migration's own

@@ -1,3 +1,4 @@
+from typing import Optional
 """Serves the real-data hotel results page (see hotel_results_page.py)
 that Aanya v5 links to from chat after a genuine (non-fallback) TripSure
 hotel search. Read-only — no booking/mutation here."""

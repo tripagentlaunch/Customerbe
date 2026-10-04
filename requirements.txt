@@ -15,5 +15,5 @@ pinecone
 # install/import, on top of the OOM this caused at process boot — see
 # vector_store.py's lazy import of sentence_transformers).
 --extra-index-url https://download.pytorch.org/whl/cpu
-torch==2.13.0
+torch==2.8.0
 sentence-transformers

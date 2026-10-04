@@ -1,3 +1,4 @@
+from typing import Optional
 """Real-data hotel results page for Aanya v5's chat hand-off.
 
 Stores the RAW hotel dicts from a genuine (note is None) TripSure
@@ -40,7 +41,7 @@ def _evict_expired() -> None:
             del _STORE[k]
 
 
-def hotel_maps_url(lat, lng) -> str | None:
+def hotel_maps_url(lat, lng) -> Optional[str]:
     """Plain Google Maps search deep link from real coordinates only —
     no API key needed, no link constructed when either coordinate is
     missing/unparseable (never a fabricated/placeholder location)."""
@@ -64,7 +65,7 @@ def store_results(raw_hotels: list[dict], filters: dict) -> str:
     return results_id
 
 
-def _why_matches(hotel_info: dict, price_inr: float | None, filters: dict) -> str:
+def _why_matches(hotel_info: dict, price_inr: Optional[float], filters: dict) -> str:
     """Grounded only in real data: the hotel's own star rating/city vs.
     the customer's own stated preferences — never generic copy."""
     bits = []
@@ -99,7 +100,7 @@ def _why_matches(hotel_info: dict, price_inr: float | None, filters: dict) -> st
     return ", ".join(bits) if bits else "matches your search"
 
 
-def render_results_page(results_id: str) -> str | None:
+def render_results_page(results_id: str) -> Optional[str]:
     """Returns the results page HTML, or None if the id is unknown/expired
     — caller (the router) turns that into a 404, never fabricated content."""
     _evict_expired()

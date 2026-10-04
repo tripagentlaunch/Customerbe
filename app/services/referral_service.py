@@ -1,3 +1,4 @@
+from typing import Optional
 """Refer a Friend — a signed-in member invites a friend by email. Reuses the
 existing invite infrastructure end to end: invite_service.create_invitation_code()
 for code generation + the Resend send (referrer_name set, so the existing

@@ -1,3 +1,4 @@
+from typing import Optional
 """Structured (exact-match) lookups against data/assistant-corpus.json.
 
 Used by tools that need one specific city's facts (check_visa_requirement in
@@ -15,7 +16,7 @@ _log = logging.getLogger("corpus_lookup")
 
 _CORPUS_PATH = Path(__file__).resolve().parents[3] / "data" / "assistant-corpus.json"
 
-_corpus: dict | None = None
+_corpus: Optional[dict] = None
 _name_to_slug: dict[str, str] | None = None
 
 
@@ -32,7 +33,7 @@ def _load() -> None:
             _name_to_slug[city["name"].lower()] = slug
 
 
-def find_city(name_or_slug: str) -> dict | None:
+def find_city(name_or_slug: str) -> Optional[dict]:
     """Returns the raw city dict from the corpus (plus a "_slug" key), or
     None if nothing matches."""
     _load()
@@ -53,7 +54,7 @@ def find_city(name_or_slug: str) -> dict | None:
     return city
 
 
-def visa_info(name_or_slug: str) -> dict | None:
+def visa_info(name_or_slug: str) -> Optional[dict]:
     city = find_city(name_or_slug)
     if not city:
         return None

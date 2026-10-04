@@ -1,3 +1,5 @@
+from __future__ import annotations
+from typing import Optional
 """Internal, non-customer-facing endpoints. Never mounted for browser/app
 traffic use — every route here is gated behind a shared secret and is meant
 to be called only by a trusted scheduler (a cron job, a Supabase Edge
@@ -14,7 +16,6 @@ idempotent, already-atomic-claimed read against TripSure; nothing here can
 double-execute or fabricate data even if triggered twice concurrently.
 """
 
-from __future__ import annotations
 
 import hmac
 import logging
@@ -28,7 +29,7 @@ router = APIRouter(prefix="/internal", tags=["internal"])
 _log = logging.getLogger("anaya_v6.internal_router")
 
 
-def _check_secret(provided: str | None) -> None:
+def _check_secret(provided: Optional[str]) -> None:
     expected = os.environ.get("ANAYA_INTERNAL_TICK_SECRET")
     # Fail closed: an unset secret means this endpoint refuses everything,
     # not that it falls open — same posture as BOOKING_LIVE_ENABLED's
@@ -38,7 +39,7 @@ def _check_secret(provided: str | None) -> None:
 
 
 @router.post("/anaya/tasks/tick")
-async def anaya_tasks_tick(x_internal_secret: str | None = Header(default=None)):
+async def anaya_tasks_tick(x_internal_secret: Optional[str] = Header(default=None)):
     _check_secret(x_internal_secret)
     try:
         return await run_due_tasks()

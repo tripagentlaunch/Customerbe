@@ -1,3 +1,5 @@
+from __future__ import annotations
+from typing import Optional
 """Hotel/flight comparison & ranking — an algorithm that does not exist
 anywhere else in this codebase (hotel_service.py/flight_service.py are pure
 pass-through TripSure proxies with zero scoring logic, confirmed during
@@ -7,7 +9,6 @@ hotels/flights exist, fewer than 3 tiers are returned; if zero, an empty
 list is returned and the caller must say so honestly, never invent a filler.
 """
 
-from __future__ import annotations
 
 from dataclasses import dataclass
 
@@ -16,13 +17,13 @@ from dataclasses import dataclass
 class RankedHotel:
     tier: str  # "Best Match" | "Best Value" | "Premium"
     name: str
-    star_rating: float | None
-    price_inr: float | None
-    city: str | None
+    star_rating: Optional[float]
+    price_inr: Optional[float]
+    city: Optional[str]
     raw: dict
 
 
-def _parse_hotel(h: dict) -> dict | None:
+def _parse_hotel(h: dict) -> Optional[dict]:
     # Field names verified against js/hotel-search.js's own hotelCard() and
     # concierge_tools.py's _normalize_hotel_option — the real, already-live
     # rendering of this exact TripSure response shape, not guessed.
@@ -44,7 +45,7 @@ def _parse_hotel(h: dict) -> dict | None:
     return {"name": name, "star_rating": star, "price_inr": price, "city": info.get("city"), "raw": h}
 
 
-def hotel_compare(hotels: list[dict], *, star_min: float | None = None) -> list[RankedHotel]:
+def hotel_compare(hotels: list[dict], *, star_min: Optional[float] = None) -> list[RankedHotel]:
     """Single-city trip: call once for that city's results. Multi-city
     trip: call once per hotel base (see group_by_hotel_base) — one ranked
     list per base, never merged across bases. `star_min` filters to hotels
@@ -114,14 +115,14 @@ def group_by_hotel_base(itinerary_legs: list[dict]) -> list[dict]:
 @dataclass
 class RankedFlight:
     tier: str  # "Best Match" | "Cheapest"
-    airline: str | None
-    price_inr: float | None
-    duration: str | None
-    stops: int | None
+    airline: Optional[str]
+    price_inr: Optional[float]
+    duration: Optional[str]
+    stops: Optional[int]
     raw: dict
 
 
-def _parse_flight(opt: dict) -> dict | None:
+def _parse_flight(opt: dict) -> Optional[dict]:
     airline = (
         opt.get("airline") or opt.get("airlineName") or opt.get("carrier")
         or (opt.get("marketingAirline") or {}).get("name")

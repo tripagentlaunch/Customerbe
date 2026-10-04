@@ -1,3 +1,5 @@
+from __future__ import annotations
+from typing import Optional
 """Phase 1: task resume only (`resume_task`) — reload a trip's profile,
 itinerary and task status by id so a returning customer never has to repeat
 context. Proactive SPONTANEOUS follow-up (notifying a customer who hasn't
@@ -7,7 +9,6 @@ requirements.txt, no Procfile/render.yaml for a worker process) — Phase 3,
 alongside the price-watch schema this build deliberately deferred.
 """
 
-from __future__ import annotations
 
 from app.anaya_v6 import task_manager, trip_memory
 

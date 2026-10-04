@@ -1,3 +1,4 @@
+from typing import Optional
 """POST /ai/concierge/chat/v3 — Aanya v3, the field-metadata + 10-step
 decision-engine build described in aanya_flow_v3.py's module docstring
 (built from the CONVERSATION-SPECIFIC sections of TripAgent_Master_AI_

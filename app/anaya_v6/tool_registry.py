@@ -1,3 +1,5 @@
+from __future__ import annotations
+from typing import Optional
 """Tool registry — every tool Anaya V6 can call, with its executor and
 approval category. Real, live-executed via action_manager.py: flight_search,
 hotel_search, hotel_details, hotel_price_check, itinerary_generate/update,
@@ -19,10 +21,9 @@ audit-logged) via a real tool call, not a new external action that itself
 needs approval-gating or a fresh audit entry.
 """
 
-from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Awaitable, Callable
+from typing import Optional, Any, Awaitable, Callable
 
 from app.anaya_v6.tools import (
     booking_tools,

@@ -1,3 +1,5 @@
+from __future__ import annotations
+from typing import Optional
 """Anaya V6 turn orchestrator — the entrypoint every channel (web today,
 WhatsApp in a later phase — see the build brief's channel-agnostic
 requirement) calls with one inbound message: analyze -> merge into
@@ -5,7 +7,6 @@ persistent trip_memory -> plan -> execute real tools via action_manager ->
 compose a grounded reply -> persist.
 """
 
-from __future__ import annotations
 
 import logging
 import re
@@ -29,14 +30,14 @@ _FALLBACK_TEXT = (
 
 
 class TurnResult:
-    def __init__(self, trip_id: str, text: str, handoff: dict | None = None, cards: list[dict] | None = None):
+    def __init__(self, trip_id: str, text: str, handoff: Optional[dict] = None, cards: list[dict] | None = None):
         self.trip_id = trip_id
         self.text = text
         self.handoff = handoff
         self.cards = cards or []
 
 
-def _star_min_from_profile(profile: dict) -> float | None:
+def _star_min_from_profile(profile: dict) -> Optional[float]:
     pref = context_manager.get_value(profile, "star_rating_pref")
     if not pref:
         return None
@@ -59,7 +60,7 @@ def _searched_results_summary(state) -> str:
     return "; ".join(parts) if parts else "no live search completed yet"
 
 
-def _with_notification(tool_results: dict | None, notification: dict | None) -> dict:
+def _with_notification(tool_results: Optional[dict], notification: Optional[dict]) -> dict:
     tool_results = dict(tool_results or {})
     if notification:
         tool_results["notification"] = notification
@@ -76,7 +77,7 @@ def _identity_candidates_from_state(state) -> dict:
     return {"phone": guest.get("guest_mobile"), "email": guest.get("guest_email"), "name": guest.get("guest_full_name")}
 
 
-async def _resolve_identity_if_needed(state, channel: str, identity_hint: dict | None) -> None:
+async def _resolve_identity_if_needed(state, channel: str, identity_hint: Optional[dict]) -> None:
     """No-op (and therefore fully backward-compatible) whenever identity
     resolution is disabled, already resolved, or nothing to resolve from
     yet — an anonymous customer keeps working exactly as before Phase 4C."""
@@ -223,8 +224,8 @@ async def _finish_turn(gateway: ModelGateway, state, user_text: str, today: date
 
 
 async def handle_turn(
-    trip_id: str | None, channel: str, user_text: str, gateway: ModelGateway | None = None,
-    identity_hint: dict | None = None,
+    trip_id: Optional[str], channel: str, user_text: str, gateway: Optional[ModelGateway] = None,
+    identity_hint: Optional[dict] = None,
 ) -> TurnResult:
     gateway = gateway or get_model_gateway()
     state = trip_memory.get_or_create(trip_id, channel=channel)

@@ -1,3 +1,5 @@
+from __future__ import annotations
+from typing import Optional
 """Model gateway for Anaya V6 — the single place every anaya_v6 module calls
 an LLM through, so the underlying provider can be swapped without touching
 orchestrator/planner/tool code (build brief: "DO NOT hard-code Anaya to
@@ -9,12 +11,11 @@ claude_client.py themselves are left completely untouched; this is a new,
 independent client instance, not a shared one.
 """
 
-from __future__ import annotations
 
 import logging
 import os
 from dataclasses import dataclass
-from typing import Any, Protocol
+from typing import Optional, Any, Protocol
 
 import anthropic
 
@@ -25,10 +26,10 @@ DEFAULT_MODEL = "claude-haiku-4-5-20251001"
 
 @dataclass
 class ModelResponse:
-    tool_name: str | None
+    tool_name: Optional[str]
     tool_input: dict
     text: str
-    stop_reason: str | None
+    stop_reason: Optional[str]
     raw: Any = None
 
 
@@ -44,7 +45,7 @@ class ClaudeProvider:
     """Default provider — Anthropic Claude, forced single-tool-call pattern
     (same pattern proven in aanya_flow_v5.py's advance())."""
 
-    def __init__(self, model: str | None = None):
+    def __init__(self, model: Optional[str] = None):
         api_key = os.environ.get("ANTHROPIC_API_KEY", "").strip()
         if not api_key:
             raise RuntimeError(
@@ -63,7 +64,7 @@ class ClaudeProvider:
             messages=messages,
         )
         tool_input: dict = {}
-        tool_name: str | None = None
+        tool_name: Optional[str] = None
         for block in response.content:
             if block.type == "tool_use" and block.name == tool["name"]:
                 tool_name = block.name
@@ -106,7 +107,7 @@ class ModelGateway:
     failure is never masked by a silent fallback substitution.
     """
 
-    def __init__(self, provider: ModelProvider | None = None, provider_factory=None):
+    def __init__(self, provider: Optional[ModelProvider] = None, provider_factory=None):
         if provider is not None:
             self._provider_factory = lambda role: provider
         else:
@@ -142,7 +143,7 @@ class ModelGateway:
             return await fallback_provider.call_tool(system=system, messages=messages, tool=tool, max_tokens=max_tokens)
 
 
-_gateway: ModelGateway | None = None
+_gateway: Optional[ModelGateway] = None
 
 
 def get_model_gateway() -> ModelGateway:

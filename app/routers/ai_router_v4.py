@@ -1,3 +1,4 @@
+from typing import Optional
 """POST /ai/concierge/chat/v4 — Aanya v4, built DIRECTLY from
 Anaya_AI_Travel_Chatbot_Conversation_Flow_and_Fixes.docx (see
 aanya_flow_v4.py's own module docstring for the six fixes and how each

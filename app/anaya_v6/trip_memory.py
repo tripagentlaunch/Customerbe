@@ -1,3 +1,5 @@
+from __future__ import annotations
+from typing import Optional
 """Persistent trip state for Anaya V6 — replaces session_store.py's
 in-process-only dict (which v1-v5 keep using unchanged) with rows in
 Supabase, so a trip survives a backend restart and can be resumed later
@@ -17,7 +19,6 @@ configured to work as designed, exactly like every other Supabase-backed
 feature in this backend.
 """
 
-from __future__ import annotations
 
 import logging
 import uuid
@@ -62,9 +63,9 @@ class TripState:
     # None for every anonymous session — profile_sync_service treats that
     # as "nothing to sync", not an error; this is the exact same behavior
     # every turn had before Phase 4C.
-    member_id: str | None = None
-    enquiry_id: str | None = None
-    conversation_id: str | None = None
+    member_id: Optional[str] = None
+    enquiry_id: Optional[str] = None
+    conversation_id: Optional[str] = None
 
 
 def _now() -> str:
@@ -96,7 +97,7 @@ class InMemoryFallbackStore:
 _fallback = InMemoryFallbackStore()
 
 
-def get_or_create(trip_id: str | None, channel: str = "web") -> TripState:
+def get_or_create(trip_id: Optional[str], channel: str = "web") -> TripState:
     """`trip_id` is the caller's own reference (e.g. the frontend's
     session_id) — treated as opaque, same as session_store.py already does
     for v1-v5; no new auth system introduced."""
@@ -248,7 +249,7 @@ def claim_pending_action(trip_id: str, expected_state: str, new_pending_action: 
         return False
 
 
-def append_message(trip_id: str, role: str, content: str, tool_calls: list | None = None) -> None:
+def append_message(trip_id: str, role: str, content: str, tool_calls: Optional[list] = None) -> None:
     client = get_supabase_admin_client()
     if client is None:
         _fallback.append_message(trip_id, role, content)

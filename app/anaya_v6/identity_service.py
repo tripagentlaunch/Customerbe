@@ -1,3 +1,5 @@
+from __future__ import annotations
+from typing import Optional
 """Phase 4C — resolves the real business identity (a `members` row) behind
 an Anaya conversation, so profile_sync_service.py has a `member_id` to
 write into `enquiries`/`member_travel_preferences` instead of everything
@@ -34,7 +36,6 @@ bug here has real production blast radius. When disabled, resolve_identity
 always returns an anonymous result and touches nothing.
 """
 
-from __future__ import annotations
 
 import logging
 import os
@@ -62,7 +63,7 @@ def profile_sync_enabled() -> bool:
 
 @dataclass
 class IdentityResult:
-    member_id: str | None
+    member_id: Optional[str]
     status: str
     detail: dict = field(default_factory=dict)
 
@@ -71,7 +72,7 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def _audit(trip_id: str | None, channel: str, phone: str | None, email: str | None, wa_id: str | None, result: IdentityResult) -> None:
+def _audit(trip_id: Optional[str], channel: str, phone: Optional[str], email: Optional[str], wa_id: Optional[str], result: IdentityResult) -> None:
     client = get_supabase_admin_client()
     if client is None:
         return
@@ -103,7 +104,7 @@ def _find_member_by(client, column: str, value: str) -> list[dict]:
         return []
 
 
-def _create_member(client, *, name: str | None, phone: str | None, email: str | None) -> str | None:
+def _create_member(client, *, name: Optional[str], phone: Optional[str], email: Optional[str]) -> Optional[str]:
     try:
         row = client.table("members").insert({
             "id": str(uuid.uuid4()),
@@ -118,7 +119,7 @@ def _create_member(client, *, name: str | None, phone: str | None, email: str | 
         return None
 
 
-async def _escalate_conflict(trip_id: str | None, reason: str, detail: dict) -> None:
+async def _escalate_conflict(trip_id: Optional[str], reason: str, detail: dict) -> None:
     """Phase 4D — a conflict was previously only ever written to
     anaya_tool_execution_log, a table the Admin Panel never reads (Phase
     4A's own finding). Reusing the SAME advisor_handoff path Phase 3's
@@ -137,8 +138,8 @@ async def _escalate_conflict(trip_id: str | None, reason: str, detail: dict) -> 
 
 
 async def resolve_identity(
-    *, trip_id: str | None, channel: str, wa_id: str | None = None,
-    phone: str | None = None, email: str | None = None, name: str | None = None,
+    *, trip_id: Optional[str], channel: str, wa_id: Optional[str] = None,
+    phone: Optional[str] = None, email: Optional[str] = None, name: Optional[str] = None,
 ) -> IdentityResult:
     if not profile_sync_enabled():
         return IdentityResult(None, STATUS_DISABLED)

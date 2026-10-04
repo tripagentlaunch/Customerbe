@@ -1,3 +1,5 @@
+from __future__ import annotations
+from typing import Optional
 """Real, mutating hotel booking/cancellation execution.
 
 **This is gated behind `BOOKING_LIVE_ENABLED` (default OFF)** — matching the
@@ -21,7 +23,6 @@ Every payload shape and field name below is ported from `js/hotel-search.js`
 file's `selectHotel`/`selectRoom`/`confirmBooking` for the exact source.
 """
 
-from __future__ import annotations
 
 import logging
 import os
@@ -49,7 +50,7 @@ def _split_guest_name(full_name: str) -> tuple[str, str]:
     return first, last
 
 
-def select_cheapest_room(rooms: list[dict]) -> dict | None:
+def select_cheapest_room(rooms: list[dict]) -> Optional[dict]:
     """Room-level selection within an already-chosen hotel — same "Best
     Value" spirit already established for hotel-tier ranking (compare_tools).
     A hotel-level price (priceSummary.totalPrice) is a headline figure, not
@@ -82,7 +83,7 @@ async def prepare_hotel_booking(
 async def execute_hotel_booking(
     *, hotel_key: str, hotel_name: str, token: str, room: dict, verified_price: dict,
     check_in: str, check_out: str, adults: int, children: int,
-    guest_full_name: str, guest_email: str, guest_mobile: str, guest_pan: str | None = None,
+    guest_full_name: str, guest_email: str, guest_mobile: str, guest_pan: Optional[str] = None,
 ) -> dict:
     """The real, money-moving chain: create-itinerary (hold) -> book-room
     (confirm) -> best-effort Supabase mirror. NEVER called unless
@@ -221,7 +222,7 @@ async def execute_hotel_booking(
     }
 
 
-async def _reconcile_ambiguous_booking(partner_reference_id: str | None) -> dict | None:
+async def _reconcile_ambiguous_booking(partner_reference_id: Optional[str]) -> Optional[dict]:
     """Called ONLY after book_room times out client-side — asks TripSure
     directly whether this order actually has a real, confirmed booking on
     file. Returns the booking dict (with a real `bookingId`) if one is

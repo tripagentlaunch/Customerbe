@@ -1,9 +1,10 @@
+from __future__ import annotations
+from typing import Optional
 """save_trip / get_trip tools — thin wrappers over trip_memory.py, exposed
 as ordinary tools so the planner/orchestrator can treat "persist" and
 "resume" the same way as any other action, per the tool-registry design.
 """
 
-from __future__ import annotations
 
 from app.anaya_v6 import trip_memory
 

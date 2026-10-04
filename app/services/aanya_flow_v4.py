@@ -1,3 +1,4 @@
+from typing import Optional
 """Aanya v4 — built DIRECTLY from Anaya_AI_Travel_Chatbot_Conversation_
 Flow_and_Fixes.docx (the "Fixes 1-6" document), NOT from
 TripAgent_Human_Like_AI_Travel_Agent_Spec_and_Claude_Prompt.docx (the v2.0
@@ -232,7 +233,7 @@ def _parse_date_safe(value):
 
 
 class FlowResult:
-    def __init__(self, text: str, handoff: dict | None = None):
+    def __init__(self, text: str, handoff: Optional[dict] = None):
         self.text = text
         self.handoff = handoff
 
@@ -542,7 +543,7 @@ def _profile_summary(profile: dict) -> str:
     return "\n".join(lines) if lines else "(nothing known yet — this is the customer's first message)"
 
 
-def _mode_instruction(mode: str, target_field: str | None, reason: str | None, intent: str) -> str:
+def _mode_instruction(mode: str, target_field: Optional[str], reason: Optional[str], intent: str) -> str:
     if mode == "clarify_invalid":
         return (
             f"The merged trip information has a problem: {reason}. Point this out naturally and "
@@ -629,8 +630,8 @@ def _analyze_system_prompt(profile: dict, today: date) -> str:
 
 
 def _reply_system_prompt(
-    profile: dict, intent: str, mode: str, target_field: str | None,
-    reason: str | None, direct_question: bool, today: date,
+    profile: dict, intent: str, mode: str, target_field: Optional[str],
+    reason: Optional[str], direct_question: bool, today: date,
 ) -> str:
     today_str = today.strftime("%A, %d %B %Y")
     instruction = _mode_instruction(mode, target_field, reason, intent)
@@ -662,7 +663,7 @@ def _build_messages(history: list[dict], user_text: str) -> list[dict]:
     return messages
 
 
-def _extract_tool_input(response, name: str) -> dict | None:
+def _extract_tool_input(response, name: str) -> Optional[dict]:
     for block in response.content:
         if block.type == "tool_use" and block.name == name:
             return dict(block.input or {})
@@ -679,7 +680,7 @@ def _extract_tool_input(response, name: str) -> dict | None:
 # clarify-the-date, is decided in code, same as every other mode).
 # ---------------------------------------------------------------------------
 
-def _date_not_past_message(value: str, today: date) -> str | None:
+def _date_not_past_message(value: str, today: date) -> Optional[str]:
     """`value` is either a resolved ISO date (the common case — the
     analyze call already turned a clear relative/bare date into the
     correct real year) or the customer's own ambiguous words verbatim
@@ -706,7 +707,7 @@ def _date_not_past_message(value: str, today: date) -> str | None:
     return None
 
 
-def check_date_clarification(profile: dict, today: date) -> tuple[str | None, str | None]:
+def check_date_clarification(profile: dict, today: date) -> tuple[str | None, Optional[str]]:
     """Returns (message, field) for the FIRST date field that needs
     clarifying (start_date checked before end_date — Section 2's "one
     primary question at a time"), or (None, None) if both are fine or
@@ -721,7 +722,7 @@ def check_date_clarification(profile: dict, today: date) -> tuple[str | None, st
     return None, None
 
 
-def _resolve_pending_date_clarify(pending: dict, diff: dict, explicit_confirmation: bool, today: date) -> str | None:
+def _resolve_pending_date_clarify(pending: dict, diff: dict, explicit_confirmation: bool, today: date) -> Optional[str]:
     """Called on the turn AFTER a clarification was asked. Returns the
     value to write back to the profile, or None if the reply still isn't
     clear enough (re-ask the same clarification — Fix 4's "never silently

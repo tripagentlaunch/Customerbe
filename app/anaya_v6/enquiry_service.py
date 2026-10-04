@@ -1,3 +1,5 @@
+from __future__ import annotations
+from typing import Optional
 """Phase 4C — `enquiries` is the canonical Trip/intake record (Phase 4A/4B
 finding: `intent` jsonb is already commented "parsed: services, dests,
 dates, pax" in tripagent-full/db/001_core_schema.sql — it was built for
@@ -11,7 +13,6 @@ closed; a new one is only ever created when none is open. Closed enquiries
 are never written to by this module.
 """
 
-from __future__ import annotations
 
 import logging
 import uuid
@@ -27,7 +28,7 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def get_or_create_active_enquiry(member_id: str, channel: str) -> str | None:
+def get_or_create_active_enquiry(member_id: str, channel: str) -> Optional[str]:
     if not profile_sync_enabled() or not member_id:
         return None
     client = get_supabase_admin_client()

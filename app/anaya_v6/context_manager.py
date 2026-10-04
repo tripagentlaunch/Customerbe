@@ -1,3 +1,5 @@
+from __future__ import annotations
+from typing import Optional
 """Trip-profile context management for Anaya V6.
 
 Reuses aanya_flow_v5.py's field schema and pure-Python merge/validate/
@@ -10,10 +12,9 @@ new ModelGateway instead of a raw Anthropic client, so the rest of anaya_v6
 never talks to Claude directly.
 """
 
-from __future__ import annotations
 
 from datetime import date
-from typing import Any
+from typing import Optional, Any
 
 from app.anaya_v6.model_gateway import ModelGateway
 from app.services.aanya_flow_v5 import (  # noqa: F401 - re-exported for anaya_v6 callers

@@ -1,3 +1,4 @@
+from typing import Optional
 """
 TripAgent backend — app/services/image_cache_service.py
 
@@ -27,7 +28,7 @@ directly rather than breaking the request — caching is an optimization,
 never a hard dependency of get_hotel_public.
 """
 import logging
-from typing import Optional
+from typing import Optional, Optional
 
 import httpx
 

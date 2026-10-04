@@ -1,3 +1,4 @@
+from typing import Optional
 """Summarizes an Aanya conversation into a structured trip brief for the
 advisor's Enquiry Inbox (tripagent-full/advisor-panel). Fired once per
 session, at the same "hand this to your advisor" moment ai_router.py
@@ -505,7 +506,7 @@ class ConversationSummarizer:
         raise RuntimeError("Claude did not return the expected record_trip_brief tool call")
 
 
-_summarizer: ConversationSummarizer | None = None
+_summarizer: Optional[ConversationSummarizer] = None
 
 
 def get_summarizer() -> ConversationSummarizer:

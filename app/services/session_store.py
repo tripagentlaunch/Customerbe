@@ -1,3 +1,4 @@
+from typing import Optional
 """In-memory, per-chat-session conversation state for Aanya's tool-calling flow.
 
 Keyed by an opaque `session_id` the frontend generates and sends on every
@@ -32,7 +33,7 @@ class SessionState:
         self.history: list[dict] = []
         # The booking/visa-application draft awaiting the member's explicit
         # "yes" — see concierge_tools.py. None when nothing is pending.
-        self.pending_action: dict | None = None
+        self.pending_action: Optional[dict] = None
         # Set once ai_router.py has fired summarize_conversation.py +
         # chat_enquiry_service.py for this session, so a repeated hand-off
         # signal (the member says "talk to a human" twice, or keeps
@@ -44,7 +45,7 @@ class SessionState:
         # _post_handoff_reply) updates THIS row's detail rather than
         # creating a second one — see ai_router.py's handling of
         # FlowResult.enquiry_update.
-        self.enquiry_id: str | None = None
+        self.enquiry_id: Optional[str] = None
         # Drives the fixed 6-turn flow (see aanya_flow.py) — which question
         # comes next and what's already been answered, so a later turn never
         # re-asks a field the member already gave. "turn0" is the initial
@@ -64,7 +65,7 @@ class SessionState:
         # the member been stuck on this exact question back-to-back,"
         # never a cross-step or cross-session count.
         self.unresolved_streak = 0
-        self.unresolved_streak_step: str | None = None
+        self.unresolved_streak_step: Optional[str] = None
         self.last_seen = time.time()
 
     def add_turn(self, role: str, content: str) -> None:

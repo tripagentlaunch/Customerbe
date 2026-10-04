@@ -1,3 +1,4 @@
+from typing import Optional
 """Aanya v5 — same architecture and honesty principles as v4 (two forced
 Claude tool calls per turn around a deterministic Python decision core,
 field-metadata-tagged profile, EXPLICIT/INFERRED/TOOL_RESULT/CONFIRMED
@@ -357,7 +358,7 @@ def _parse_date_safe(value):
 
 
 class FlowResult:
-    def __init__(self, text: str, handoff: dict | None = None):
+    def __init__(self, text: str, handoff: Optional[dict] = None):
         self.text = text
         self.handoff = handoff
 
@@ -766,7 +767,7 @@ def _profile_summary(profile: dict) -> str:
 
 
 def _mode_instruction(
-    mode: str, target_field: str | None, reason: str | None, intent: str, active_intents: list[str],
+    mode: str, target_field: Optional[str], reason: Optional[str], intent: str, active_intents: list[str],
     missing_fields: list[str] | None = None, bulk_request: bool = False,
 ) -> str:
     if mode == "clarify_invalid":
@@ -941,9 +942,9 @@ def _analyze_system_prompt(profile: dict, today: date) -> str:
 
 
 def _reply_system_prompt(
-    profile: dict, intent: str, mode: str, target_field: str | None,
-    reason: str | None, direct_question: bool, today: date, active_intents: list[str],
-    missing_fields: list[str] | None = None, live_results_block: str | None = None,
+    profile: dict, intent: str, mode: str, target_field: Optional[str],
+    reason: Optional[str], direct_question: bool, today: date, active_intents: list[str],
+    missing_fields: list[str] | None = None, live_results_block: Optional[str] = None,
     bulk_request: bool = False,
 ) -> str:
     today_str = today.strftime("%A, %d %B %Y")
@@ -978,7 +979,7 @@ def _build_messages(history: list[dict], user_text: str) -> list[dict]:
     return messages
 
 
-def _extract_tool_input(response, name: str) -> dict | None:
+def _extract_tool_input(response, name: str) -> Optional[dict]:
     for block in response.content:
         if block.type == "tool_use" and block.name == name:
             return dict(block.input or {})
@@ -990,7 +991,7 @@ def _extract_tool_input(response, name: str) -> dict | None:
 # as v4 does. Unchanged from v4.
 # ---------------------------------------------------------------------------
 
-def _date_not_past_message(value: str, today: date) -> str | None:
+def _date_not_past_message(value: str, today: date) -> Optional[str]:
     iso = _parse_date_safe(value)
     if iso:
         if iso < today:
@@ -1002,7 +1003,7 @@ def _date_not_past_message(value: str, today: date) -> str | None:
     return None
 
 
-def check_date_clarification(profile: dict, today: date) -> tuple[str | None, str | None]:
+def check_date_clarification(profile: dict, today: date) -> tuple[str | None, Optional[str]]:
     """Returns (message, field) for the FIRST date field that needs
     clarifying, or (None, None) if all are fine or unset. return_date is
     checked too (round-trip flights) — start_date/end_date first since
@@ -1017,7 +1018,7 @@ def check_date_clarification(profile: dict, today: date) -> tuple[str | None, st
     return None, None
 
 
-def _resolve_pending_date_clarify(pending: dict, diff: dict, explicit_confirmation: bool, today: date) -> str | None:
+def _resolve_pending_date_clarify(pending: dict, diff: dict, explicit_confirmation: bool, today: date) -> Optional[str]:
     field = pending["field"]
     if field in diff and diff[field]:
         return diff[field]
@@ -1165,7 +1166,7 @@ _CURRENCY_AMOUNT_PATTERN = re.compile(
 )
 
 
-def _violates_invented_price_rule(reply: str, mode: str, target_field: str | None) -> bool:
+def _violates_invented_price_rule(reply: str, mode: str, target_field: Optional[str]) -> bool:
     if mode != "ask" or target_field != "budget_amount":
         return False
     return bool(_CURRENCY_AMOUNT_PATTERN.search(reply))
@@ -1233,7 +1234,7 @@ def _as_second_person(hint: str) -> str:
     return hint
 
 
-def _safe_ask_reply(mode: str, target_field: str | None, reason: str | None, missing_fields: list[str] | None = None) -> str:
+def _safe_ask_reply(mode: str, target_field: Optional[str], reason: Optional[str], missing_fields: list[str] | None = None) -> str:
     if mode == "clarify_invalid" and reason:
         return f"Quick check — {reason}. Could you confirm the correct value?"
     missing_fields = missing_fields or ([target_field] if target_field else [])
@@ -1339,7 +1340,7 @@ def missing_required_fields(profile: dict, required: list[str]) -> tuple[list[st
 # money-safety boundary pending Amit's sign-off, unchanged by this file).
 # ---------------------------------------------------------------------------
 
-async def _fetch_live_results(profile: dict, active_intents: list[str]) -> tuple[dict, str | None]:
+async def _fetch_live_results(profile: dict, active_intents: list[str]) -> tuple[dict, Optional[str]]:
     """Runs a live TripSure search for every service intent that's actually
     active and ready. Returns (results, error) where results holds
     normalized FlightOption/HotelOption dicts only — never fabricated data.
@@ -1875,7 +1876,7 @@ party size, dates). Never add a fact that isn't in the profile below. Call recor
 exactly once."""
 
 
-async def generate_narrative_summary(profile: dict) -> str | None:
+async def generate_narrative_summary(profile: dict) -> Optional[str]:
     """Returns a rich prose summary from the live profile, or None on any
     failure (caller falls back to build_default_summary — see module note
     above)."""

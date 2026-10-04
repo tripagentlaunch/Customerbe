@@ -1,3 +1,4 @@
+from typing import Optional
 """Writes the structured trip brief from summarize_conversation.py into
 `enquiries`, for the advisor panel's Enquiry Inbox (tripagent-full,
 localhost:8001, same Supabase project — gnifmusartvwngcuquou — as this
@@ -80,7 +81,7 @@ def create_chat_enquiry(summary: str, detail: dict, channel: str = "concierge_ch
 # ---------------------------------------------------------------------------
 
 
-def format_budget_inr(amount, currency: str | None = None, per_person: bool | None = None) -> str | None:
+def format_budget_inr(amount, currency: Optional[str] = None, per_person: Optional[bool] = None) -> Optional[str]:
     """Shared by v2/v3/v4's own build_enquiry_detail() (2026-09-10) — formats
     a raw numeric budget figure into the SAME "₹NL"-style lakhs notation v1's
     own budget field already uses (summarize_conversation.py's

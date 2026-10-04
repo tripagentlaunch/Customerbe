@@ -1,7 +1,8 @@
+from typing import Optional
 import httpx
 from app.config import settings
 
-async def get_air_quality(lat: float, lon: float) -> dict | None:
+async def get_air_quality(lat: float, lon: float) -> Optional[dict]:
     if not settings.google_places_api_key:
         return None
     url = "https://airquality.googleapis.com/v1/currentConditions:lookup"

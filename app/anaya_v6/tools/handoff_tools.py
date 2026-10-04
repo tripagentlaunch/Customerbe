@@ -1,3 +1,5 @@
+from __future__ import annotations
+from typing import Optional
 """advisor_handoff tool — Phase 1 wraps the EXISTING chat_enquiry_service.py
 path unchanged (same `enquiries` table, same advisor Enquiry Inbox
 tripagent-full already reads). A full context-bundle handoff (live routing,
@@ -7,7 +9,6 @@ today's already-working behavior behind the new tool interface so V6
 doesn't regress it in Phase 1.
 """
 
-from __future__ import annotations
 
 import logging
 

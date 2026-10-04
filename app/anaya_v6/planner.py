@@ -1,3 +1,5 @@
+from __future__ import annotations
+from typing import Optional
 """Anaya V6 planner — decides the next useful action each turn: ask,
 reconfirm, run a real tool (search/itinerary), or present a grounded
 recommendation, or hand off. Extends aanya_flow_v5.py's mode-decision core
@@ -7,7 +9,6 @@ plainly "no live flight/hotel search... no itinerary engine... connected
 yet"; V6 removes exactly that limitation.
 """
 
-from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
@@ -32,11 +33,11 @@ _MULTI_BASE_PREFIXES = ("a mix of ", "mix of ", "a split between ", "split betwe
 @dataclass
 class PlannerDecision:
     mode: str
-    target_field: str | None = None
-    reason: str | None = None
+    target_field: Optional[str] = None
+    reason: Optional[str] = None
     tool_kwargs: dict = field(default_factory=dict)
     tool_kwargs_list: list = field(default_factory=list)
-    unavailable_tool: str | None = None
+    unavailable_tool: Optional[str] = None
 
 
 def hotel_bases_from_profile(profile: dict) -> list[str]:

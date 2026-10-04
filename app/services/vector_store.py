@@ -1,3 +1,4 @@
+from typing import Optional
 """Pinecone-backed vector store for Aanya's grounded corpus (RAG retrieval).
 
 Per Amit's direction, Pinecone replaces Supabase pgvector as the vector DB.
@@ -13,7 +14,7 @@ backend/app/routers/ai_router.py (per-request retrieval) both import this.
 
 import logging
 import os
-from typing import TYPE_CHECKING
+from typing import Optional, TYPE_CHECKING
 
 from pinecone import Pinecone, ServerlessSpec
 
@@ -138,7 +139,7 @@ class VectorStore:
         )
         return vectors[0].tolist()
 
-    def upsert(self, vectors: list[dict], namespace: str | None = None, batch_size: int = 100) -> int:
+    def upsert(self, vectors: list[dict], namespace: Optional[str] = None, batch_size: int = 100) -> int:
         """vectors: [{"id": str, "values": [float, ...], "metadata": {...}}, ...]"""
         idx = self.index()
         upserted = 0
@@ -149,7 +150,7 @@ class VectorStore:
         return upserted
 
     def query(self, query_text: str, top_k: int = DEFAULT_TOP_K,
-              filter: dict | None = None, namespace: str | None = None) -> list[dict]:
+              filter: Optional[dict] = None, namespace: Optional[str] = None) -> list[dict]:
         """Embeds query_text locally, queries Pinecone, returns
         [{"id", "score", "metadata"}, ...] ordered by relevance — standard RAG."""
         vector = self.embed_query(query_text)
@@ -173,7 +174,7 @@ def _field(obj, key):
     return getattr(obj, key, None)
 
 
-_store: VectorStore | None = None
+_store: Optional[VectorStore] = None
 
 
 def get_vector_store() -> VectorStore:

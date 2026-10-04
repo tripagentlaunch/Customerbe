@@ -1,3 +1,4 @@
+from typing import Optional
 """
 TripAgent backend — app/services/pexels_service.py
 Pexels stock photo, priority order (2026-09-17, direct request):
@@ -59,7 +60,7 @@ the event loop for every other in-flight request.
 """
 import re
 import time
-from typing import Optional
+from typing import Optional, Optional
 
 import httpx
 

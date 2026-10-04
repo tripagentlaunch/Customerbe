@@ -1,3 +1,4 @@
+from typing import Optional
 from fastapi import APIRouter
 from app.services.cities_service import get_all_cities, get_city_venues
 

@@ -1,3 +1,5 @@
+from __future__ import annotations
+from typing import Optional
 """Tool contracts that exist for schema completeness (the build brief
 requires all 14 tools be exposed) but are NOT executed in Phase 1: booking,
 cancellation, modification, visa, monitoring, proposal_generation.
@@ -14,7 +16,6 @@ code rule, every one of these routes to the SAME safe fallback: explain the
 limit and hand off to the advisor, never partially execute.
 """
 
-from __future__ import annotations
 
 
 class NotAvailableYet(Exception):

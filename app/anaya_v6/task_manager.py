@@ -1,3 +1,5 @@
+from __future__ import annotations
+from typing import Optional
 """Task tracking for Anaya V6 — lets a trip-planning task be resumed later,
 and (Phase 3) lets a proactive monitoring task run safely on a schedule.
 
@@ -20,7 +22,6 @@ to look), `failed`, `cancelled`. Existing Phase 1/2 code that only ever
 used {pending, in_progress, blocked, done} keeps working unchanged.
 """
 
-from __future__ import annotations
 
 import logging
 import uuid
@@ -51,9 +52,9 @@ class Task:
     trip_state_id: str
     task_type: str
     status: str
-    step: str | None = None
+    step: Optional[str] = None
     payload: dict = field(default_factory=dict)
-    resumable_at: str | None = None  # ISO timestamp — also doubles as "next run at" for monitoring tasks
+    resumable_at: Optional[str] = None  # ISO timestamp — also doubles as "next run at" for monitoring tasks
 
 
 _fallback: dict[str, Task] = {}
@@ -115,7 +116,7 @@ def get_or_create_task(trip_state_id: str, task_type: str = "trip_planning") -> 
     return task
 
 
-def create_task(trip_state_id: str, task_type: str, *, status: str = STATUS_RUNNABLE, payload: dict | None = None, resumable_at: str | None = None) -> Task:
+def create_task(trip_state_id: str, task_type: str, *, status: str = STATUS_RUNNABLE, payload: Optional[dict] = None, resumable_at: Optional[str] = None) -> Task:
     """Unlike get_or_create_task (one row per (trip, task_type), used for
     the trip-planning task), monitoring tasks are created explicitly by
     the caller once it has decided what to watch — a trip could, in
@@ -169,8 +170,8 @@ def get_task(trip_state_id: str, task_type: str) -> Task | None:
 
 
 def update_task(
-    task: Task, *, status: str | None = None, step: str | None = None,
-    payload: dict | None = None, resumable_at: str | None = None,
+    task: Task, *, status: Optional[str] = None, step: Optional[str] = None,
+    payload: Optional[dict] = None, resumable_at: Optional[str] = None,
 ) -> None:
     if status:
         task.status = status
@@ -193,7 +194,7 @@ def update_task(
         _log.error("[TASK_MANAGER] update failed for %s: %s: %s", task.id, type(exc).__name__, exc)
 
 
-def claim_task(task_id: str, expected_status: str, new_status: str, new_payload: dict | None = None) -> bool:
+def claim_task(task_id: str, expected_status: str, new_status: str, new_payload: Optional[dict] = None) -> bool:
     """Phase 3 — the SAME atomic-compare-and-swap discipline Phase 2.5
     established for `trip_memory.claim_pending_action`, applied to
     scheduled tasks: the guard against a scheduler running the tick
@@ -226,7 +227,7 @@ def claim_task(task_id: str, expected_status: str, new_status: str, new_payload:
         return False
 
 
-def list_due_tasks(task_type: str, *, now: datetime | None = None, limit: int = 25) -> list[Task]:
+def list_due_tasks(task_type: str, *, now: Optional[datetime] = None, limit: int = 25) -> list[Task]:
     """Tasks in STATUS_RUNNABLE or STATUS_WAITING whose `resumable_at` has
     passed (or is unset — a freshly-created task is due immediately). Used
     by monitoring_service.run_due_tasks(), which then claims each one
@@ -273,7 +274,7 @@ def next_run_at(minutes_from_now: int) -> str:
     return (datetime.now(timezone.utc) + timedelta(minutes=minutes_from_now)).isoformat()
 
 
-def list_tasks_for_trip(trip_state_id: str, task_type: str | None = None) -> list[Task]:
+def list_tasks_for_trip(trip_state_id: str, task_type: Optional[str] = None) -> list[Task]:
     """Every task row for a trip (unlike get_task/get_or_create_task, which
     only ever return the single latest row per (trip, task_type)) — used to
     scan for a pending proactive notification on turn start, and for

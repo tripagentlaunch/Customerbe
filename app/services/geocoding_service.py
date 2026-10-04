@@ -1,7 +1,8 @@
+from typing import Optional
 import httpx
 from app.config import settings
 
-async def geocode_city(city_name: str) -> dict | None:
+async def geocode_city(city_name: str) -> Optional[dict]:
     if not settings.google_places_api_key:
         return None
     url = "https://maps.googleapis.com/maps/api/geocode/json"

@@ -1,3 +1,4 @@
+from typing import Optional
 import logging
 
 import httpx
@@ -17,7 +18,7 @@ _VALIDATION_STATUS = {
 }
 
 
-def _extract_bearer(authorization: str | None) -> str:
+def _extract_bearer(authorization: Optional[str]) -> str:
     if not authorization or not authorization.lower().startswith("bearer "):
         raise HTTPException(status_code=401, detail="missing_session")
     token = authorization.split(" ", 1)[1].strip()
@@ -27,7 +28,7 @@ def _extract_bearer(authorization: str | None) -> str:
 
 
 @router.post("", response_model=ReferralCreateResponse)
-async def create_referral(payload: ReferralCreateRequest, authorization: str | None = Header(default=None)):
+async def create_referral(payload: ReferralCreateRequest, authorization: Optional[str] = Header(default=None)):
     token = _extract_bearer(authorization)
     try:
         invite = await referral_service.create_referral(token, payload)

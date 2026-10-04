@@ -1,3 +1,5 @@
+from __future__ import annotations
+from typing import Optional
 """Phase 4C — links Anaya's own `anaya_conversation_messages` transcript to
 the REAL, advisor-visible `conversations`/`messages` tables (tripagent-full/
 db/001_core_schema.sql, widened by 043/124) instead of building a third
@@ -13,7 +15,6 @@ matching the existing convention (024_comms_continuity.sql) exactly, so a
 future cross-channel unification has the key already in place.
 """
 
-from __future__ import annotations
 
 import logging
 import uuid
@@ -29,7 +30,7 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def get_or_create_conversation(member_id: str, channel: str) -> str | None:
+def get_or_create_conversation(member_id: str, channel: str) -> Optional[str]:
     if not profile_sync_enabled() or not member_id:
         return None
     client = get_supabase_admin_client()
@@ -58,7 +59,7 @@ def get_or_create_conversation(member_id: str, channel: str) -> str | None:
         return None
 
 
-def mirror_message(conversation_id: str | None, role: str, content: str) -> None:
+def mirror_message(conversation_id: Optional[str], role: str, content: str) -> None:
     """Best-effort mirror into the canonical `messages` table. Never
     raises, never blocks the turn — Anaya's own `anaya_conversation_messages`
     row (written separately by trip_memory.append_message) remains the

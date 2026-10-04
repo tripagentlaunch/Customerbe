@@ -1,3 +1,5 @@
+from __future__ import annotations
+from typing import Optional
 """Budget calculation. `budget_from_results` computes strictly from numbers
 already returned by a real hotel_search/flight_search call — the build
 brief's "budget must be calculated and validated using live results"
@@ -9,12 +11,11 @@ role — for before any real search has run; its output is always tagged
 basis="heuristic" so callers never present it as a validated figure.
 """
 
-from __future__ import annotations
 
 
 def budget_from_results(
-    *, nights: int, travellers: int, hotel_price_per_night: float | None = None,
-    room_count: int = 1, flight_price_total: float | None = None,
+    *, nights: int, travellers: int, hotel_price_per_night: Optional[float] = None,
+    room_count: int = 1, flight_price_total: Optional[float] = None,
 ) -> dict:
     """Returns {"total_inr", "hotel_component_inr", "flight_component_inr",
     "basis"}. Any missing component is simply omitted from the total (never
@@ -44,7 +45,7 @@ _CABIN_CLASS_PAX_PREMIUM = {"Economy": 0, "Business": 150000}
 _ROUGH_RATE_PER_PAX_NIGHT_INR = 18000
 
 
-def rough_estimate(*, nights: int, travellers: int, cabin_class: str | None = None) -> dict:
+def rough_estimate(*, nights: int, travellers: int, cabin_class: Optional[str] = None) -> dict:
     """Pre-search fallback ONLY — used before any real hotel/flight search
     has run, exactly aanya_flow.py's original role for
     estimate_budget_range(). Always basis="heuristic"."""
@@ -53,7 +54,7 @@ def rough_estimate(*, nights: int, travellers: int, cabin_class: str | None = No
     return {"total_inr": base + premium, "basis": "heuristic"}
 
 
-def compare_to_stated_budget(stated_total_inr: float | None, computed: dict) -> dict:
+def compare_to_stated_budget(stated_total_inr: Optional[float], computed: dict) -> dict:
     """The ONLY function anywhere in Anaya V6 allowed to produce a
     feasibility verdict ("fits"/"over budget") — and even this one only
     ever compares two numbers that are both already real: the customer's

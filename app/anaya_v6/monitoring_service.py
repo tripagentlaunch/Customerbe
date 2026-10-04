@@ -1,3 +1,5 @@
+from __future__ import annotations
+from typing import Optional
 """Phase 3 — proactive hotel price/availability monitoring: the foundation
 required by the build brief, built entirely on existing infrastructure
 (no new scheduler, no new queue, no new table — see task_manager.py's own
@@ -32,7 +34,6 @@ alert. A check that fails to reach TripSure produces no notification at
 all, never an invented one.
 """
 
-from __future__ import annotations
 
 import logging
 import re
@@ -203,7 +204,7 @@ def _handoff_detail(task: task_manager.Task, payload: dict, *, reason: str) -> d
     return detail
 
 
-def pop_pending_notification(trip_id: str) -> dict | None:
+def pop_pending_notification(trip_id: str) -> Optional[dict]:
     """Called once at the start of every turn (any channel — see
     orchestrator.handle_turn): if a monitoring task for this trip has a
     real, already-detected change waiting to be told to the customer,
@@ -242,7 +243,7 @@ _MONITOR_CONTEXT_RE = re.compile(
 )
 
 
-def match_monitor_request(user_text: str, hotel_options: dict) -> dict | None:
+def match_monitor_request(user_text: str, hotel_options: dict) -> Optional[dict]:
     """Same matching shape as booking_flow.match_hotel_selection (tier or
     name substring, single-option fallback) but gated on monitoring
     language instead of book/reserve language — checked BEFORE
@@ -269,7 +270,7 @@ def match_monitor_request(user_text: str, hotel_options: dict) -> dict | None:
     return None
 
 
-async def try_start_price_watch(state, user_text: str) -> dict | None:
+async def try_start_price_watch(state, user_text: str) -> Optional[dict]:
     """The customer-facing entry point for creating a monitor: reuses the
     EXACT same live re-verification chain booking_flow.start_hotel_booking
     already uses (hotel_details -> select_cheapest_room ->
@@ -317,7 +318,7 @@ async def try_start_price_watch(state, user_text: str) -> dict | None:
     }}}
 
 
-async def run_due_tasks(*, now: datetime | None = None, limit_per_type: int = 25) -> dict:
+async def run_due_tasks(*, now: Optional[datetime] = None, limit_per_type: int = 25) -> dict:
     """The tick entrypoint (called by the new internal, secret-gated HTTP
     endpoint — see app/internal/internal_router.py — never by anything
     inside a customer-facing request). For every due task of every known

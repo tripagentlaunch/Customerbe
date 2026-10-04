@@ -1,3 +1,4 @@
+from typing import Optional
 """POST /ai/concierge/v6/chat — Anaya V6, the new agentic core (orchestrator/
 planner/tool registry/model gateway — see app/anaya_v6/). Entirely additive:
 does not touch ai_router.py (v1, the live default) or v2-v5. Reuses the

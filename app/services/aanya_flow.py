@@ -1,3 +1,4 @@
+from typing import Optional
 """Aanya's lead-capture flow (Whatsapp_Agent_-_Questions.pdf) — a
 slot-filling state machine, not a linear script.
 
@@ -604,7 +605,7 @@ def _fuzzy_word_in(text: str, candidates) -> bool:
     return False
 
 
-def _match(user_text: str, options: list[str], keywords: dict[str, list[str]]) -> str | None:
+def _match(user_text: str, options: list[str], keywords: dict[str, list[str]]) -> Optional[str]:
     text = user_text.strip().lower()
     for opt in options:
         if text == opt.lower():
@@ -710,7 +711,7 @@ _NIGHT_PHRASES = {
 }
 
 
-def _month_from_date_hint(date_hint: str) -> str | None:
+def _month_from_date_hint(date_hint: str) -> Optional[str]:
     t = (date_hint or "").lower()
     for month in _MONTH_NAMES:
         if month in t or month[:3] in t:
@@ -718,7 +719,7 @@ def _month_from_date_hint(date_hint: str) -> str | None:
     return None
 
 
-def _parse_nights(hint: str) -> int | None:
+def _parse_nights(hint: str) -> Optional[int]:
     """"2 nights" -> 2. "5 days" -> 4 (days are conventionally nights+1, a
     stated approximation, not exact). "1week"/"3 weeks" -> N*7 (numeric,
     same treatment as nights/days — not just the FIXED "a week"/"two
@@ -810,7 +811,7 @@ def _looks_like_specific_date_range(text: str) -> bool:
 _MONTH_NUMBERS = {name: i + 1 for i, name in enumerate(_MONTH_NAMES)}
 
 
-def _month_number_from_text(text: str) -> int | None:
+def _month_number_from_text(text: str) -> Optional[int]:
     """Same name-or-3-letter-abbreviation matching as _month_from_date_hint,
     returning the calendar month NUMBER (1-12) instead of the name, for
     date arithmetic against today. Kept as a separate small function
@@ -987,7 +988,7 @@ _RELATIVE_TIME_WORDS = (
 )
 
 
-def _resolve_month_answer(text: str) -> str | None:
+def _resolve_month_answer(text: str) -> Optional[str]:
     """ask_month deliberately accepts more than its 3 suggested answers
     (its own question text says "even 'November' is enough"), but the
     value actually STORED must always be the clean resolved answer, never
@@ -1620,8 +1621,8 @@ class FlowResult:
     def __init__(
         self,
         text: str,
-        handoff: dict | None = None,
-        enquiry_update: dict | None = None,
+        handoff: Optional[dict] = None,
+        enquiry_update: Optional[dict] = None,
     ):
         self.text = text
         self.handoff = handoff

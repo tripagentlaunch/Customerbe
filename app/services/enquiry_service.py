@@ -1,3 +1,4 @@
+from typing import Optional
 """Creates a real `enquiries` row for a signed-in member — EnquirePage.tsx's
 /enquire form (Phase A: gated behind sign-in; contact details are never
 duplicated onto enquiries).

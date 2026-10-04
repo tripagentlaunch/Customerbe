@@ -1,3 +1,4 @@
+from typing import Optional
 """Explicit Pydantic schemas for Aanya's flight/hotel/visa tool calls.
 
 Formalizes what concierge_tools.py previously handled as loose dicts: every
@@ -46,7 +47,7 @@ Coverage honesty, per domain — do not treat these as equally verified:
   corpus, not a live supplier call.
 """
 
-from typing import Literal, Optional
+from typing import Optional, Literal, Optional
 
 from pydantic import BaseModel, Field, field_validator
 
