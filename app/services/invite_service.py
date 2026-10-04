@@ -717,16 +717,12 @@ def _invitation_approved_request_email_html(
     expires_on: str,
     link: str,
 ) -> str:
-    """The Request Access approval variant (2026-09-16, direct request) —
-    same table-based/inline-styled/no-hero-no-gradient constraints and the
-    same code-block/button/fine-print structure as
-    _invitation_referral_email_html, but written institutionally: a cold,
-    self-applied applicant has no referrer to credit, so there's no
-    referrer_first_name/referrer_full_name here at all — see
-    create_invitation_code()'s own note on why this variant exists rather
-    than forcing a fake referrer name into the other template. Merge
+    """The Request Access approval variant — updated 2026-10-04 to match
+    the "You've been given a key to TripAgent" design (EMAIL-01 react-email
+    template, hand-translated to inline HTML since this backend posts raw
+    HTML strings to Resend, not compiled react-email output). Merge
     fields: invite_code, expires_on (link is derived, not spec'd)."""
-    preheader = "Your invitation holds for 14 days."
+    preheader = "You've been given a key to TripAgent."
     return f"""<!doctype html>
 <html lang="en">
 <head>
@@ -740,38 +736,39 @@ def _invitation_approved_request_email_html(
 </head>
 <body style="margin:0;padding:0;background-color:#f4f2ee;">
   <div style="display:none;font-size:1px;line-height:1px;max-height:0;max-width:0;opacity:0;overflow:hidden;mso-hide:all;">
-    {preheader}&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;
+    {preheader}&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;
   </div>
   <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#f4f2ee;">
     <tr>
       <td align="center" style="padding:48px 16px;">
         <table role="presentation" width="600" cellpadding="0" cellspacing="0" border="0" style="width:600px;max-width:600px;background-color:#ffffff;">
           <tr>
-            <td style="padding:44px 48px 0;">
-              <p style="margin:0 0 28px;font-family:Arial,Helvetica,sans-serif;font-size:10px;letter-spacing:.24em;text-transform:uppercase;color:#6E2A38;">
-                TripAgent &middot; Membership by invitation
+            <td align="center" style="padding:44px 48px 0;">
+              <p style="margin:0 0 10px;font-family:Arial,Helvetica,sans-serif;font-size:10px;letter-spacing:.24em;text-transform:uppercase;color:#6E2A38;">
+                Membership by invitation
               </p>
               <h1 style="margin:0 0 22px;font-family:Georgia,'Times New Roman',serif;font-weight:400;font-size:28px;line-height:1.3;color:#1a1a1a;">
-                We thought you&rsquo;d want in.
+                You&rsquo;ve been given a key to TripAgent
               </h1>
-              <p style="margin:0 0 8px;font-family:Georgia,'Times New Roman',serif;font-size:16px;line-height:1.65;color:#333333;">
-                TripAgent plans and runs travel for a small number of people. We keep it small deliberately &mdash; every trip is handled by someone who knows you, not by a queue. You asked to join, and we&rsquo;ve made room for you.
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:0 48px 0;">
+              <p style="margin:0 0 24px;font-family:Georgia,'Times New Roman',serif;font-size:16px;line-height:1.65;color:#333333;">
+                You&rsquo;ve been given a key to TripAgent. Follow the link below to open your invitation.
               </p>
             </td>
           </tr>
           <tr>
-            <td style="padding:24px 48px 0;">
+            <td style="padding:0 48px 0;">
               <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="border:1px solid #ddd6cb;">
                 <tr>
                   <td align="center" style="padding:28px 24px;">
                     <p style="margin:0 0 12px;font-family:Arial,Helvetica,sans-serif;font-size:10px;letter-spacing:.2em;text-transform:uppercase;color:#8a8377;">
-                      Your invitation key
+                      Invitation key
                     </p>
-                    <p style="margin:0 0 12px;font-family:Georgia,'Times New Roman',serif;font-size:22px;font-weight:700;letter-spacing:.14em;color:#1a1a1a;">
+                    <p style="margin:0;font-family:Georgia,'Times New Roman',serif;font-size:22px;font-weight:500;letter-spacing:.06em;color:#1a1a1a;">
                       {invite_code}
-                    </p>
-                    <p style="margin:0;font-family:Georgia,'Times New Roman',serif;font-size:13px;font-style:italic;color:#6b6558;">
-                      Holds until {expires_on}. For you alone.
                     </p>
                   </td>
                 </tr>
@@ -779,12 +776,12 @@ def _invitation_approved_request_email_html(
             </td>
           </tr>
           <tr>
-            <td align="center" style="padding:32px 48px 0;">
+            <td align="center" style="padding:24px 48px 0;">
               <table role="presentation" cellpadding="0" cellspacing="0" border="0">
                 <tr>
                   <td align="center" bgcolor="#6E2A38">
                     <a href="{link}" target="_blank" style="display:inline-block;padding:15px 34px;font-family:Arial,Helvetica,sans-serif;font-size:12.5px;letter-spacing:.14em;text-transform:uppercase;color:#ffffff;text-decoration:none;">
-                      Claim your invitation
+                      Open the door
                     </a>
                   </td>
                 </tr>
@@ -792,7 +789,15 @@ def _invitation_approved_request_email_html(
             </td>
           </tr>
           <tr>
-            <td style="padding:36px 48px 44px;">
+            <td style="padding:24px 48px 0;">
+              <p style="margin:0;font-family:Arial,Helvetica,sans-serif;font-size:11.5px;line-height:1.7;color:#918b7e;">
+                If the button doesn&rsquo;t work, use this link or enter the key by hand:<br>
+                <span style="color:#6E2A38;word-break:break-all;">{link}</span>
+              </p>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:20px 48px 44px;">
               <p style="margin:0;font-family:Arial,Helvetica,sans-serif;font-size:11.5px;line-height:1.7;color:#918b7e;border-top:1px solid #ece7dc;padding-top:20px;">
                 {_FINE_PRINT}
               </p>
