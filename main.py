@@ -22,6 +22,7 @@ from app.routers.places_router import router as places_router
 from app.routers.referral_router import router as referral_router
 from app.internal.internal_router import router as internal_router
 from app.routers.whatsapp_router_v6 import router as whatsapp_router_v6
+from app.routers.comms_router import router as comms_router
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(message)s")
 
@@ -106,6 +107,7 @@ app.include_router(ai_router_v4)
 app.include_router(ai_router_v5)
 # app.include_router(ai_router_v6)  # disabled: Anaya not in use yet
 app.include_router(whatsapp_router_v6)
+app.include_router(comms_router)
 app.include_router(internal_router)
 app.include_router(enquiry_router)
 app.include_router(cities_router)

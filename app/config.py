@@ -158,3 +158,12 @@ class Settings:
 
 
 settings = Settings()
+
+# Sinch / ACL WhatsApp — appended below Settings class instantiation
+import os as _os
+settings.sinch_app_id = _os.environ.get("SINCH_APP_ID", "").strip()
+settings.sinch_api_username = _os.environ.get("SINCH_API_USERNAME", "").strip()
+settings.sinch_api_password = _os.environ.get("SINCH_API_PASSWORD", "").strip()
+settings.sinch_sender_number = _os.environ.get("SINCH_SENDER_NUMBER", "918451871851").strip()
+settings.sinch_webhook_secret = _os.environ.get("SINCH_WEBHOOK_SECRET", "").strip()
+settings.sinch_base_url = _os.environ.get("SINCH_BASE_URL", "https://api.aclwhatsapp.com/v2").strip()
