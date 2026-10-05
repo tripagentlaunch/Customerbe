@@ -125,7 +125,7 @@ class Settings:
         self.site_base_url = (
             (os.environ.get("SITE_LOCAL_BASE_URL", "").strip() or "http://localhost:5500")
             if self.is_local_dev
-            else "https://tripagent-site-orpin.vercel.app"
+            else (os.environ.get("SITE_BASE_URL_OVERRIDE", "").strip() or "https://tripagent-site-orpin.vercel.app")
         )
 
         # Base URL for links the BACKEND itself serves (e.g. the hotel
