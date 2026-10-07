@@ -7,7 +7,7 @@ load_dotenv()
 
 _REQUIRED = ("TRIPSURE_BASE_URL", "TRIPSURE_TENANT_ID", "TRIPSURE_API_KEY")
 
-
+# settings
 class Settings:
     def __init__(self):
         values = {name: os.environ.get(name, "").strip() for name in _REQUIRED}
