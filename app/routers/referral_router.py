@@ -2,10 +2,11 @@ from typing import Optional
 import logging
 
 import httpx
-from fastapi import APIRouter, Header, HTTPException
+from fastapi import APIRouter, Header, HTTPException, Depends
 
 from app.models.referral_models import ReferralCreateRequest, ReferralCreateResponse
 from app.services import referral_service
+from app.dependencies.csrf import require_csrf_header
 
 router = APIRouter(prefix="/referrals", tags=["referrals"])
 _log = logging.getLogger("referral_router")
@@ -27,7 +28,7 @@ def _extract_bearer(authorization: Optional[str]) -> str:
     return token
 
 
-@router.post("", response_model=ReferralCreateResponse)
+@router.post("", response_model=ReferralCreateResponse, dependencies=[Depends(require_csrf_header)])
 async def create_referral(payload: ReferralCreateRequest, authorization: Optional[str] = Header(default=None)):
     token = _extract_bearer(authorization)
     try:

@@ -1,7 +1,9 @@
 import logging
 
-from fastapi import APIRouter, HTTPException, Request, Response
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
 
+from app.dependencies.csrf import require_csrf_header
+from app.dependencies.rate_limit import rate_limit_otp_request, rate_limit_otp_verify
 from app.dependencies.session_cookie import (
     ACCESS_TOKEN_COOKIE,
     REFRESH_TOKEN_COOKIE,
@@ -21,7 +23,7 @@ router = APIRouter(prefix="/auth", tags=["auth"])
 _log = logging.getLogger("auth_router")
 
 
-@router.post("/request-otp", response_model=RequestOtpResponse)
+@router.post("/request-otp", response_model=RequestOtpResponse, dependencies=[Depends(require_csrf_header), Depends(rate_limit_otp_request)])
 async def request_otp(payload: RequestOtpRequest):
     try:
         result = auth_service.request_otp(payload.email)
@@ -31,7 +33,7 @@ async def request_otp(payload: RequestOtpRequest):
     return RequestOtpResponse(**result)
 
 
-@router.post("/verify-otp", response_model=VerifyOtpResponse)
+@router.post("/verify-otp", response_model=VerifyOtpResponse, dependencies=[Depends(require_csrf_header), Depends(rate_limit_otp_verify)])
 async def verify_otp(payload: VerifyOtpRequest, response: Response):
     try:
         result = auth_service.verify_otp(payload.email, payload.token)
@@ -68,7 +70,7 @@ async def get_session(request: Request, response: Response):
     return SessionResponse(signed_in=result["signed_in"], member=result["member"])
 
 
-@router.post("/logout")
+@router.post("/logout", dependencies=[Depends(require_csrf_header)])
 async def logout(request: Request, response: Response):
     access_token = request.cookies.get(ACCESS_TOKEN_COOKIE)
     auth_service.sign_out(access_token)

@@ -6,11 +6,13 @@ from app.dependencies.auth import get_access_token
 from app.models.enquiry_models import EnquiryCreateRequest, EnquiryCreateResponse
 from app.services import enquiry_service
 
+from app.dependencies.csrf import require_csrf_header
+
 router = APIRouter(prefix="/enquiries", tags=["enquiries"])
 _log = logging.getLogger("enquiry_router")
 
 
-@router.post("", response_model=EnquiryCreateResponse)
+@router.post("", response_model=EnquiryCreateResponse, dependencies=[Depends(require_csrf_header)])
 async def create_enquiry(payload: EnquiryCreateRequest, token: str = Depends(get_access_token)):
     try:
         row = enquiry_service.create_enquiry(token, payload)
