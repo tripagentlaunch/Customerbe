@@ -7,6 +7,7 @@ from app.config import settings
 from app.routers.access_request_router import router as access_request_router
 from app.routers.admin_router import router as admin_router
 from app.routers.ai_router import router as ai_router
+from app.routers.auth_router import router as auth_router
 from app.routers.ai_router_v2 import router as ai_router_v2
 from app.routers.ai_router_v3 import router as ai_router_v3
 from app.routers.ai_router_v4 import router as ai_router_v4
@@ -14,6 +15,7 @@ from app.routers.ai_router_v5 import router as ai_router_v5
 # from app.routers.ai_router_v6 import router as ai_router_v6  # disabled: Anaya not in use yet
 from app.routers.enquiry_router import router as enquiry_router
 from app.routers.cities_router import router as cities_router
+from app.routers.config_router import router as config_router
 from app.routers.flight_router import router as flight_router
 from app.routers.hotel_router import router as hotel_router
 from app.routers.hotel_results_router import router as hotel_results_router
@@ -23,6 +25,8 @@ from app.routers.referral_router import router as referral_router
 from app.internal.internal_router import router as internal_router
 from app.routers.whatsapp_router_v6 import router as whatsapp_router_v6
 from app.routers.comms_router import router as comms_router
+from app.routers.me_router import router as me_router
+from app.routers.my_year_router import router as my_year_router
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(message)s")
 
@@ -53,6 +57,7 @@ if settings.is_local_dev:
         allow_origin_regex=r"^http://(localhost|127\.0\.0\.1):\d+$",
         allow_methods=["*"],
         allow_headers=["*"],
+        allow_credentials=True
     )
 else:
     app.add_middleware(
@@ -91,6 +96,7 @@ else:
         allow_origin_regex=r"^https://[a-zA-Z0-9-]+-trip-agent\.vercel\.app$",
         allow_methods=["*"],
         allow_headers=["*"],
+        allow_credentials=True
     )
 
 app.include_router(hotel_router)
@@ -101,6 +107,9 @@ app.include_router(access_request_router)
 app.include_router(invite_router)
 app.include_router(referral_router)
 app.include_router(ai_router)
+app.include_router(auth_router)
+app.include_router(me_router)
+app.include_router(my_year_router)
 app.include_router(ai_router_v2)
 app.include_router(ai_router_v3)
 app.include_router(ai_router_v4)
@@ -111,6 +120,7 @@ app.include_router(comms_router)
 app.include_router(internal_router)
 app.include_router(enquiry_router)
 app.include_router(cities_router)
+app.include_router(config_router)
 app.include_router(places_router)
 
 

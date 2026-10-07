@@ -96,6 +96,16 @@ class Settings:
         # this is unset, never silently allowed through.
         self.admin_api_key = os.environ.get("ADMIN_API_KEY", "").strip()
 
+        # Public, non-secret runtime config served via GET /config (see
+        # app/routers/config_router.py) so the frontend no longer needs its
+        # own .env file for these values. All optional — safe defaults below
+        # match what the frontend used to default to when its own env vars
+        # were unset.
+        self.whatsapp_number = os.environ.get("WHATSAPP_NUMBER", "").strip()
+        self.show_coming_soon = os.environ.get("SHOW_COMING_SOON", "true").strip().lower() != "false"
+        self.enable_inspector = os.environ.get("ENABLE_INSPECTOR", "false").strip().lower() == "true"
+        self.google_maps_api_key = os.environ.get("GOOGLE_MAPS_API_KEY", "").strip()
+
         # Local-dev CORS switch (see main.py) — mirrors TRIPAGENT-FE's own
         # NEXT_PUBLIC_APP_ENV convention (default/unset = "production" there
         # too). FAILS CLOSED like every other toggle above: unset, misspelled,
