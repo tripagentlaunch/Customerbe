@@ -197,6 +197,7 @@ async def create_invitation_code(
     referred_by_member_id: Optional[str] = None,
     friend_phone: Optional[str] = None,
     custom_code: Optional[str] = None,
+    raise_on_email_error: bool = True,
 ) -> dict:
     """Single choke point for every issuance path — the curated admin invite
     (admin_router.py's /invite-customer) and the approved-access-request path
@@ -232,6 +233,9 @@ async def create_invitation_code(
     trade-off the old two-step admin_router flow had) — the caller decides
     how to surface that. send_email=False skips the Resend call entirely;
     the generated code/link are returned exactly the same either way.
+    raise_on_email_error=False returns the code with email_sent=False on a
+    failed send instead of raising — so approve() can still show the admin
+    the code to share by hand.
 
     Retries code generation only on the rare primary-key collision; any
     other database error propagates. Returns {code, expires_at, expires_on,
@@ -279,6 +283,7 @@ async def create_invitation_code(
     link = f"{_INVITE_BASE_URL}?code={code}"
 
     resend_id = None
+    email_sent = send_email
     if send_email:
         if referrer_full_name:
             referrer_first_name = referrer_full_name.split(" ")[0]
@@ -295,14 +300,20 @@ async def create_invitation_code(
                 link=link,
             )
             subject = "Your invitation to TripAgent"
-        resend_id = await _send_via_resend(to_email=recipient_email, subject=subject, html=html)
+        try:
+            resend_id = await _send_via_resend(to_email=recipient_email, subject=subject, html=html)
+        except (httpx.HTTPStatusError, httpx.RequestError) as exc:
+            if raise_on_email_error:
+                raise
+            _log.error("[INVITE] email send failed for code %s: %s", code, exc)
+            email_sent = False
 
     return {
         "code": code,
         "expires_at": expires_at_iso,
         "expires_on": expires_on,
         "link": link,
-        "email_sent": send_email,
+        "email_sent": email_sent,
         "resend_id": resend_id,
     }
 
@@ -401,8 +412,13 @@ def redeem_invite(code: str, details: Optional[dict] = None) -> dict:
     row = rows[0]
     if row["status"] != "unused":
         return {"valid": False, "used": True}
+    # expires_at (now+14d, set by create_invitation_code()) is what the
+    # invitation email promises — enforce it here, not just display it.
+    # Older rows with no expires_at stay redeemable, as before.
+    if row.get("expires_at") and datetime.fromisoformat(row["expires_at"]) <= datetime.now(timezone.utc):
+        return {"valid": False, "error": "expired"}
 
-    pulled = _pull_access_request_details(client, row["access_request_id"]) if row.get("access_request_id") else {}
+    pulled =_pull_access_request_details(client, row["access_request_id"]) if row.get("access_request_id") else {}
 
     now = datetime.now(timezone.utc)
     until = now + timedelta(days=_GRANT_DAYS)

@@ -66,6 +66,9 @@ async def approve_access_request(request_id: str, payload: dict = Body(default={
     # exists (approve() updates status + creates the code before
     # attempting the send) — a failed send does not roll either back;
     # the code is real and usable even if the email never left Resend.
+    # UPDATED: approve() now passes raise_on_email_error=False, so a failed
+    # send comes back as a normal result with email_sent=False (and the
+    # code) instead of reaching these handlers; they remain as a backstop.
     except httpx.HTTPStatusError as exc:
         _log.error("[ACCESS_REQUEST] Resend rejected email for request %s: %s", request_id, exc.response.text)
         raise HTTPException(status_code=502, detail=f"Resend error: {exc.response.text}")

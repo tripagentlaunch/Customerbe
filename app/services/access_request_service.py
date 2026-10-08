@@ -127,18 +127,39 @@ async def approve(request_id: str, reviewed_by: Optional[str] = None) -> dict:
     if not row or row.get("status") != "pending":
         return {"ok": False, "error": "not_found"}
 
+    # Conditional on status='pending' so two concurrent approves can't both
+    # win and issue two codes — only the update that actually flips the row
+    # proceeds.
     now_iso = datetime.now(timezone.utc).isoformat()
-    client.table("site_access_requests").update(
+    claimed = client.table("site_access_requests").update(
         {"status": "approved", "reviewed_at": now_iso, "reviewed_by": reviewed_by}
-    ).eq("id", request_id).execute()
+    ).eq("id", request_id).eq("status", "pending").execute().data
+    if not claimed:
+        return {"ok": False, "error": "not_found"}
 
     # access_request_id (2026-09-17, direct request) links the issued code
     # back to this row — redeem_invite() reads it at claim time to pull
     # name/email/phone forward onto site_members, so the applicant never
     # has to re-enter what they already gave here.
-    invite = await invite_service.create_invitation_code(
-        row["full_name"], row["email"], send_email=_SEND_INVITE_EMAIL_ON_APPROVE, access_request_id=request_id
-    )
+    #
+    # If the code can't be created, put the row back to pending so it
+    # reappears in the admin list and can be retried — otherwise it would
+    # sit as 'approved' with no code ever issued. A failed email send does
+    # NOT roll back: the code is real, and the admin panel shows it with
+    # email_sent=False so it can be shared by hand.
+    try:
+        invite = await invite_service.create_invitation_code(
+            row["full_name"],
+            row["email"],
+            send_email=_SEND_INVITE_EMAIL_ON_APPROVE,
+            access_request_id=request_id,
+            raise_on_email_error=False,
+        )
+    except Exception:
+        client.table("site_access_requests").update(
+            {"status": "pending", "reviewed_at": None, "reviewed_by": None}
+        ).eq("id", request_id).execute()
+        raise
     return {"ok": True, **invite}
 
 
@@ -155,12 +176,14 @@ def deny(request_id: str, reviewed_by: Optional[str] = None, decline_reason: Opt
         return {"ok": False, "error": "not_found"}
 
     now_iso = datetime.now(timezone.utc).isoformat()
-    client.table("site_access_requests").update(
+    denied = client.table("site_access_requests").update(
         {
             "status": "denied",
             "reviewed_at": now_iso,
             "reviewed_by": reviewed_by,
             "decline_reason": (decline_reason or "").strip() or None,
         }
-    ).eq("id", request_id).execute()
+    ).eq("id", request_id).eq("status", "pending").execute().data
+    if not denied:
+        return {"ok": False, "error": "not_found"}
     return {"ok": True}
