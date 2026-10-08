@@ -424,7 +424,9 @@ def redeem_invite(code: str, details: Optional[dict] = None) -> dict:
     email = (details.get("email") or pulled.get("email") or row.get("recipient_email") or "").strip().lower() or None
 
     member = {
-        "name": details.get("name") or pulled.get("name") or None,
+        # label: the invite's name, set by every issuance path (the admin
+        # console's invite has no access request to pull a name from).
+        "name": details.get("name") or pulled.get("name") or row.get("label") or None,
         "email": email,
         "phone": details.get("phone") or pulled.get("phone") or row.get("friend_phone") or None,
         "city": details.get("city") or None,
