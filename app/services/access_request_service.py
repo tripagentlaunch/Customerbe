@@ -47,7 +47,7 @@ def create_access_request(payload: dict) -> dict:
     the admin panel's display; see the 0009 migration's own note.
     travel_date/destination are optional free text, matching
     enquire.html's existing dates/destination field convention — not
-    required, unlike name/email/phone/reason."""
+    required, unlike name/email/phone."""
     first_name = (payload.get("first_name") or "").strip()
     last_name = (payload.get("last_name") or "").strip()
     email = (payload.get("email") or "").strip().lower()
@@ -57,7 +57,10 @@ def create_access_request(payload: dict) -> dict:
     travel_date = (payload.get("travel_date") or "").strip() or None
     destination = (payload.get("destination") or "").strip() or None
 
-    if not first_name or not last_name or not email or not phone or not reason:
+    # Required: name, email, mobile. last_name (a single-word name) and
+    # reason ("Anything we should know · optional" on the form) may be empty
+    # (2026-10-08, direct request).
+    if not first_name or not email or not phone:
         return {"ok": False, "error": "missing_fields"}
     if not _EMAIL_RE.match(email):
         return {"ok": False, "error": "bad_email"}
@@ -65,12 +68,12 @@ def create_access_request(payload: dict) -> dict:
     client = _require_client()
     row = {
         "first_name": first_name,
-        "last_name": last_name,
+        "last_name": last_name or None,
         "full_name": f"{first_name} {last_name}".strip(),
         "email": email,
         "phone": phone,
         "city": city,
-        "reason": reason,
+        "reason": reason or None,
         "travel_date": travel_date,
         "destination": destination,
         "status": "pending",
