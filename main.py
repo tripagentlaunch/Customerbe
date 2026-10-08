@@ -1,3 +1,5 @@
+import base64
+import json
 import logging
 
 from fastapi import FastAPI
@@ -124,6 +126,37 @@ app.include_router(config_router)
 app.include_router(places_router)
 
 
+def _supabase_identity() -> dict:
+    """Which Supabase project and key type this deploy is using — the
+    project ref and the key's role only, never the key. A non-service key
+    (e.g. the anon key pasted into SUPABASE_SERVICE_ROLE_KEY) can't see
+    site_invitation_codes through RLS, so every invite code reads as
+    not_found; this makes that visible instead of silent."""
+    url, key = settings.supabase_url, settings.supabase_service_role_key
+    ref = url.split("//")[-1].split(".")[0] if url else None
+    role = None
+    if key.startswith("sb_secret_"):
+        role = "service_role"
+    elif key.startswith("sb_publishable_"):
+        role = "anon"
+    elif key.count(".") == 2:
+        try:
+            part = key.split(".")[1]
+            role = json.loads(base64.urlsafe_b64decode(part + "=" * (-len(part) % 4))).get("role")
+        except ValueError:
+            role = "unreadable"
+    return {"project": ref, "key_role": role or ("missing" if not key else "unknown")}
+
+
+_SUPABASE = _supabase_identity()
+if _SUPABASE["key_role"] != "service_role":
+    logging.getLogger("hotel_proxy").error(
+        "[CONFIG] SUPABASE_SERVICE_ROLE_KEY is not a service-role key (role=%s, project=%s): "
+        "invite codes, members and access requests will all read as empty",
+        _SUPABASE["key_role"], _SUPABASE["project"],
+    )
+
+
 @app.get("/health")
 async def health():
-    return {"status": "ok"}
+    return {"status": "ok", "supabase": _SUPABASE}
