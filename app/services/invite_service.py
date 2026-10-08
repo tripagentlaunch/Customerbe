@@ -236,7 +236,7 @@ async def create_invitation_code(
 
     Retries code generation only on the rare primary-key collision; any
     other database error propagates. Returns {code, expires_at, expires_on,
-    link}."""
+    link, email_sent, email_error, resend_id}."""
     client = _require_client()
 
     now = datetime.now(timezone.utc)
@@ -281,6 +281,7 @@ async def create_invitation_code(
 
     resend_id = None
     email_sent = send_email
+    email_error = None
     if send_email:
         if referrer_full_name:
             referrer_first_name = referrer_full_name.split(" ")[0]
@@ -299,10 +300,14 @@ async def create_invitation_code(
             subject = "Your invitation to TripAgent"
         try:
             resend_id = await _send_via_resend(to_email=recipient_email, subject=subject, html=html)
-        except (httpx.HTTPStatusError, httpx.RequestError) as exc:
+        except (httpx.HTTPStatusError, httpx.RequestError, RuntimeError) as exc:
             if raise_on_email_error:
                 raise
-            _log.error("[INVITE] email send failed for code %s: %s", code, exc)
+            # Resend's own response body (e.g. "domain not verified",
+            # "invalid to address") is the useful part — surfaced to the
+            # admin panel as email_error so a failed send says why.
+            email_error = exc.response.text if isinstance(exc, httpx.HTTPStatusError) else str(exc)
+            _log.error("[INVITE] email send failed for code %s: %s", code, email_error)
             email_sent = False
 
     return {
@@ -311,6 +316,7 @@ async def create_invitation_code(
         "expires_on": expires_on,
         "link": link,
         "email_sent": email_sent,
+        "email_error": email_error,
         "resend_id": resend_id,
     }
 

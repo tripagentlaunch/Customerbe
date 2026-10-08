@@ -4,7 +4,7 @@ import logging
 import httpx
 from fastapi import APIRouter, Body, HTTPException
 
-from app.services import invite_service
+from app.services import access_request_service, invite_service
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 _log = logging.getLogger("hotel_proxy")
@@ -60,6 +60,10 @@ async def invite_customer_named_code(payload: dict = Body(...)):
 
     code = invite_service._generate_named_code(customer_name, advisor_name)
 
+    # raise_on_email_error=False (2026-10-08, direct request): the code row
+    # is committed before the send, so a Resend failure used to come back
+    # as a 502 that hid an already-issued code. Now the code is always
+    # returned, with email_sent/email_error saying whether the email went.
     try:
         result = await invite_service.create_invitation_code(
             customer_name,
@@ -67,19 +71,27 @@ async def invite_customer_named_code(payload: dict = Body(...)):
             advisor_name,
             friend_phone=customer_phone,
             custom_code=code,
+            raise_on_email_error=False,
         )
     except RuntimeError as exc:
         raise HTTPException(status_code=500, detail=str(exc))
-    except httpx.HTTPStatusError as exc:
-        _log.error("[INVITE] Resend rejected email for %s: %s", customer_email, exc.response.text)
-        raise HTTPException(status_code=502, detail=f"Resend error: {exc.response.text}")
-    except httpx.RequestError as exc:
-        _log.error("[INVITE] Resend request failed for %s: %s", customer_email, exc)
-        raise HTTPException(status_code=502, detail=str(exc))
+
+    queued = access_request_service.queue_for_advisors(
+        invite_service._require_client(),
+        name=customer_name,
+        email=customer_email,
+        phone=customer_phone,
+        message=f"Invited by {advisor_name}.",
+        dedupe_key=("invite_code", result["code"]),
+        detail={"source": "advisor_invite", "invited_by": advisor_name},
+    )
 
     return {
         "code": result["code"],
         "link": result["link"],
         "expires_at": result["expires_at"],
         "email_sent_to": customer_email,
+        "email_sent": result["email_sent"],
+        "email_error": result["email_error"],
+        **queued,
     }

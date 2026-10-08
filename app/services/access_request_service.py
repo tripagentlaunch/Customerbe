@@ -163,7 +163,81 @@ async def approve(request_id: str, reviewed_by: Optional[str] = None) -> dict:
             {"status": "pending", "reviewed_at": None, "reviewed_by": None}
         ).eq("id", request_id).execute()
         raise
-    return {"ok": True, **invite}
+    # Best-effort: a failure here never undoes the approval or the invite.
+    queued = queue_for_advisors(
+        client,
+        name=row.get("full_name"),
+        email=row.get("email"),
+        phone=row.get("phone"),
+        message=row.get("reason") or "Requested an invitation on the website.",
+        dedupe_key=("access_request_id", str(row["id"])),
+        detail={
+            "source": "access_request",
+            "destination": row.get("destination"),
+            "travel_window": row.get("travel_date"),
+            "purpose": row.get("reason"),
+            "origin_city": row.get("city"),
+        },
+    )
+    return {"ok": True, **invite, **queued}
+
+
+def queue_for_advisors(
+    client,
+    *,
+    name: Optional[str],
+    email: Optional[str],
+    phone: Optional[str],
+    message: str,
+    dedupe_key: tuple,
+    detail: dict,
+) -> dict:
+    """Puts someone who has just been issued an invite code in front of
+    advisors (2026-10-08, direct request): reuses or creates their
+    `members` row (matched on email) and opens one `enquiries` row, so they
+    appear in the admin console's Enquiries queue right away — marked
+    detail.verified=True (they were approved / invited by staff) — instead
+    of only after they claim their code (claiming writes site_members,
+    which the admin console doesn't read). Used by approve() above and by
+    admin_router.py's /invite-customer-named-code.
+
+    detail uses the same keys adminbe's traveller-profile builder reads
+    (traveler_name, destination, travel_window, purpose). dedupe_key is a
+    (detail field, value) pair — e.g. ("access_request_id", id) — so a
+    retried call can't open a second enquiry for the same issuance.
+    Returns {member_id, enquiry_id}, or {} if either write fails (logged,
+    never raised — an invite is never failed over this)."""
+    key_field, key_value = dedupe_key
+    try:
+        email = (email or "").strip().lower()
+        existing = client.table("members").select("id").eq("email", email).limit(1).execute().data if email else []
+        if existing:
+            member_id = existing[0]["id"]
+        else:
+            member_id = client.table("members").insert(
+                {"name": name or "Guest", "email": email or None, "phone": phone or None}
+            ).execute().data[0]["id"]
+
+        enquiry = client.table("enquiries").select("id").eq(f"detail->>{key_field}", key_value).limit(1).execute().data
+        if enquiry:
+            enquiry_id = enquiry[0]["id"]
+        else:
+            full_detail = {**detail, key_field: key_value, "traveler_name": name, "verified": True}
+            enquiry_id = client.table("enquiries").insert(
+                {
+                    "member_id": member_id,
+                    "channel": "web",
+                    "message": message,
+                    "intent": {},
+                    "detail": {k: v for k, v in full_detail.items() if v},
+                    "trip_preferences": {},
+                    "status": "open",
+                }
+            ).execute().data[0]["id"]
+        return {"member_id": member_id, "enquiry_id": enquiry_id}
+    except Exception as exc:  # noqa: BLE001 — never fail an invite over this
+        _log.error("[ACCESS_REQUEST] could not queue %s=%s for advisors: %s", key_field, key_value, exc)
+        return {}
 
 
 def deny(request_id: str, reviewed_by: Optional[str] = None, decline_reason: Optional[str] = None) -> dict:
