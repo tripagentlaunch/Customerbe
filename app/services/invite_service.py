@@ -19,7 +19,7 @@ from app.dependencies.supabase_client import get_supabase_admin_client
 _log = logging.getLogger("hotel_proxy")
 
 # FIXED (2026-09-17, direct request): points at claim.html in THIS repo now
-# — the new, simple 8-digit claim page — not the separate deployed React
+# — the new, simple 8-character claim page — not the separate deployed React
 # app (tripagent-customer-fe-uwzg.vercel.app) this used to point at. That
 # other app's InvitationPage.tsx still has its own hardcoded 16-char
 # 4-groups-of-4 entry UI and is now stale relative to this change; it was
@@ -43,25 +43,22 @@ _E164_RE = re.compile(r"^\+[1-9]\d{6,14}$")
 _MAX_GENERATION_ATTEMPTS = 5
 
 
+# Letters for the code's 2-letter prefix/suffix — I and O are left out so
+# they can't be misread as 1 and 0 when a member types the code in.
+_CODE_LETTERS = "ABCDEFGHJKLMNPQRSTUVWXYZ"
+
+
 def _generate_code() -> str:
-    """FIXED (2026-09-17, direct request — investigated, not assumed): was
-    16 alphanumeric chars (TRIP + 12), built for invitation.html's
-    4-groups-of-4 segmented entry UI. That UI and format are retired for
-    all NEW codes, replaced by a single 8-digit number for claim.html's
-    plain numeric input. Applies globally — every issuance path
-    (admin_router.py's curated invite AND access_request_service.approve())
-    shares this one function, so there's no dual-format system to
-    maintain. redeem_invite()'s lookup is a plain string equality against
-    site_invitation_codes.code — it never validated format — so this
-    doesn't require any change there, and any already-issued 16-char (or
-    original short seed, e.g. "MAISON-2026") code already in the table
-    stays redeemable exactly as before; invitation.html is deliberately
-    left in place, unlinked from nav/email but still functional, as a
-    fallback for those (confirmed 4 real outstanding unused 16-char codes
-    at the time of this change).
-    Cryptographically random via `secrets`, not `random` — same rigor as
-    the retired alphanumeric generator."""
-    return str(secrets.randbelow(90_000_000) + 10_000_000)
+    """Random invite code in the format AA0000AA — 2 letters, 4 digits,
+    2 letters (2026-10-08, direct request; previously a plain 8-digit
+    number). Used by every issuance path without a custom_code
+    (access_request_service.approve() and create_invitation_code()'s
+    default). redeem_invite() matches site_invitation_codes.code by plain
+    equality and never validated format, so codes already issued in the old
+    8-digit or 16-character formats stay redeemable. ~2.1 billion
+    combinations; cryptographically random via `secrets`."""
+    letters = lambda: "".join(secrets.choice(_CODE_LETTERS) for _ in range(2))
+    return f"{letters()}{secrets.randbelow(10_000):04d}{letters()}"
 
 
 def _generate_named_code(recipient_name: str, advisor_name: str) -> str:
