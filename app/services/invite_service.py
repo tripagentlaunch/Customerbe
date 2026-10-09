@@ -506,19 +506,48 @@ def redeem_invite(code: str, details: Optional[dict] = None) -> dict:
     # already) — the auth_account_exists branch above never reaches here
     # unless it successfully linked an existing Auth user with no
     # site_members row yet, which is a legitimate first-time claim.
+    existing_member = None
     try:
         inserted = client.table("site_members").insert(member).execute().data
     except APIError as exc:
-        # Only clean up an Auth user THIS call created — never delete one
-        # that already existed before this request (auth_user_id set via
-        # the existing-user lookup above is someone's real account, not an
-        # orphan we're responsible for).
-        if auth_user_id and created_new_auth_user:
-            client.auth.admin.delete_user(auth_user_id)
-        if exc.code == _POSTGRES_UNIQUE_VIOLATION:
-            return {"valid": False, "error": "email_taken"}
-        raise
-    member_id = inserted[0]["id"] if inserted else None
+        if exc.code == _POSTGRES_UNIQUE_VIOLATION and email:
+            # FIXED 2026-10-09: someone who is already a member (an earlier
+            # code, or a second approval of the same request) entering a
+            # valid code sent to their own email used to get "email_taken"
+            # and no way in. This code was emailed to that address — as
+            # good as a sign-in link — so link it to their existing
+            # membership and sign them in instead.
+            rows = client.table("site_members").select("id,name,phone,auth_uid").eq("email", email).limit(1).execute().data
+            existing_member = rows[0] if rows else None
+        if existing_member is None:
+            # Only clean up an Auth user THIS call created — never delete
+            # one that already existed before this request (auth_user_id
+            # set via the existing-user lookup above is someone's real
+            # account, not an orphan we're responsible for).
+            if auth_user_id and created_new_auth_user:
+                client.auth.admin.delete_user(auth_user_id)
+            if exc.code == _POSTGRES_UNIQUE_VIOLATION:
+                return {"valid": False, "error": "email_taken"}
+            raise
+        inserted = None
+
+    if existing_member is not None:
+        member_id = existing_member["id"]
+        # Keep the member's own login if they have one; otherwise attach
+        # the Auth user resolved above. Fill only fields that are empty.
+        fill = {k: member[k] for k in ("name", "phone") if member.get(k) and not existing_member.get(k)}
+        if existing_member.get("auth_uid"):
+            if auth_user_id and created_new_auth_user and auth_user_id != existing_member["auth_uid"]:
+                client.auth.admin.delete_user(auth_user_id)
+        elif auth_user_id:
+            fill["auth_uid"] = auth_user_id
+        if fill:
+            fill["updated_at"] = now.isoformat()
+            client.table("site_members").update(fill).eq("id", member_id).execute()
+        member["name"] = existing_member.get("name") or member["name"]
+        auth_user_id = existing_member.get("auth_uid") or auth_user_id
+    else:
+        member_id = inserted[0]["id"] if inserted else None
 
     client.table("site_invitation_codes").update(
         {"status": "redeemed", "redeemed_by": member_id, "redeemed_at": now.isoformat()}
