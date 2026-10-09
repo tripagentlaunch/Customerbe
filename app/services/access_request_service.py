@@ -1,4 +1,5 @@
 from typing import Optional
+import html
 import logging
 import re
 from datetime import datetime, timezone
@@ -126,7 +127,7 @@ def create_access_request(payload: dict) -> dict:
         raise RuntimeError("Could not save access request") from exc
 
     request_id = inserted[0]["id"] if inserted else None
-    return {"ok": True, "id": request_id}
+    return {"ok": True, "id": request_id, "email": email, "first_name": first_name}
 
 
 def list_pending() -> list:
@@ -305,3 +306,66 @@ def deny(request_id: str, reviewed_by: Optional[str] = None, decline_reason: Opt
     if not denied:
         return {"ok": False, "error": "not_found"}
     return {"ok": True}
+
+
+def _request_received_email(first_name: str) -> tuple[str, str]:
+    """(html, text) for the "we've got your request" note sent right after a
+    Request Access submission — same dark look as the invitation email.
+    first_name is validated (letters only) and escaped anyway."""
+    name = html.escape(first_name)
+    serif, sans = "Georgia,'Times New Roman',serif", "Helvetica,Arial,sans-serif"
+    body = f"""<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark"><title>We have your request</title></head>
+<body style="margin:0;padding:0;background-color:#0f0d0b;">
+  <div style="display:none;max-height:0;overflow:hidden;opacity:0;">Your request is with the Desk. A person reads every one.</div>
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="#0f0d0b" style="background-color:#0f0d0b;">
+    <tr><td align="center" style="padding:24px 12px;">
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="#141210" style="width:100%;max-width:600px;background-color:#141210;border:1px solid #2e2820;border-radius:10px;">
+        <tr><td align="center" bgcolor="#1c1915" style="padding:30px 28px;background-color:#1c1915;border-radius:10px 10px 0 0;">
+          <p style="margin:0 0 10px;font-family:{sans};font-size:12px;letter-spacing:.18em;text-transform:uppercase;color:#c9a46a;">Membership by invitation</p>
+          <h1 style="margin:0;font-family:{serif};font-weight:400;font-size:30px;line-height:1.25;color:#f4efe6;">We have your request</h1>
+        </td></tr>
+        <tr><td style="padding:30px 28px 0;">
+          <p style="margin:0 0 14px;font-family:{serif};font-size:22px;color:#f4efe6;">Dear {name},</p>
+          <p style="margin:0 0 14px;font-family:{sans};font-size:16px;line-height:1.75;color:#e6e0d6;">Thank you for asking to join TripAgent. Your request is with the Desk, and a person reads every one.</p>
+          <p style="margin:0;font-family:{sans};font-size:16px;line-height:1.75;color:#e6e0d6;">If it&rsquo;s a fit, your invitation key will arrive at this address. There&rsquo;s nothing more you need to do.</p>
+        </td></tr>
+        <tr><td style="padding:24px 28px 28px;">
+          <p style="margin:0;font-family:{sans};font-size:15px;line-height:1.7;color:#e6e0d6;">Any questions, just reply to this email.</p>
+          <p style="margin:14px 0 0;font-family:{sans};font-size:15px;color:#e6e0d6;">Warmly,<br><span style="font-family:{serif};font-size:20px;color:#f4efe6;">The TripAgent Desk</span></p>
+        </td></tr>
+        <tr><td align="center" bgcolor="#1c1915" style="padding:14px 20px;background-color:#1c1915;border-top:1px solid #2e2820;border-radius:0 0 10px 10px;">
+          <p style="margin:0;font-family:{sans};font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:#a89e8e;">TripAgent &middot; Private travel, personally arranged</p>
+        </td></tr>
+      </table>
+      <p style="margin:16px 0 0;font-family:{sans};font-size:11px;line-height:1.6;color:#6f675b;max-width:560px;">You received this because this address was used to request an invitation at TripAgent. If that wasn&rsquo;t you, you can ignore this email.</p>
+    </td></tr>
+  </table>
+</body></html>"""
+    text = (
+        f"Dear {first_name},\n\n"
+        "Thank you for asking to join TripAgent. Your request is with the Desk, and a person reads every one.\n\n"
+        "If it's a fit, your invitation key will arrive at this address. There's nothing more you need to do.\n\n"
+        "Any questions, just reply to this email.\n\nWarmly,\nThe TripAgent Desk\n\n"
+        "--\nTripAgent - Private travel, personally arranged\n"
+        "You received this because this address was used to request an invitation at TripAgent. "
+        "If that wasn't you, you can ignore this email.\n"
+    )
+    return body, text
+
+
+async def send_request_received_email(email: str, first_name: str) -> None:
+    """Best-effort acknowledgement after a submission: a failed send is
+    logged, never raised — the request is already saved."""
+    try:
+        html_body, text = _request_received_email(first_name or "there")
+        await invite_service._send_via_resend(
+            to_email=email,
+            subject="We have your request — TripAgent",
+            html=html_body,
+            text=text,
+            from_name="The TripAgent Desk",
+        )
+    except Exception as exc:  # noqa: BLE001
+        _log.error("[ACCESS_REQUEST] confirmation email to %s failed: %s", email, exc)

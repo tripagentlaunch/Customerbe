@@ -2,7 +2,7 @@ from typing import Optional
 import logging
 
 import httpx
-from fastapi import APIRouter, Body, Depends, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Body, Depends, HTTPException
 
 from app.dependencies.admin_auth import require_admin_key
 from app.dependencies.csrf import require_csrf_header
@@ -28,7 +28,7 @@ _VALIDATION_STATUS = {
 # (main.py's origin allowlist blocks it for other sites), and each IP gets 5
 # submissions per 10 minutes. Field validation is in the service.
 @router.post("", dependencies=[Depends(require_csrf_header), Depends(rate_limit_access_request)])
-async def create_access_request(payload: dict = Body(default={})):
+async def create_access_request(background: BackgroundTasks, payload: dict = Body(default={})):
     try:
         result = access_request_service.create_access_request(payload)
     except RuntimeError as exc:
@@ -38,6 +38,8 @@ async def create_access_request(payload: dict = Body(default={})):
         error = result.get("error", "invalid")
         raise HTTPException(status_code=_VALIDATION_STATUS.get(error, 400), detail=error)
 
+    # Confirmation to the applicant, after the response (never fails the request).
+    background.add_task(access_request_service.send_request_received_email, result["email"], result["first_name"])
     return {"ok": True, "id": result["id"]}
 
 

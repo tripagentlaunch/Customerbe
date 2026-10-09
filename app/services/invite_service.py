@@ -835,7 +835,9 @@ def _invitation_approved_request_email_html(
 </html>"""
 
 
-async def _send_via_resend(to_email: str, subject: str, html: str) -> Optional[str]:
+async def _send_via_resend(
+    to_email: str, subject: str, html: str, *, text: Optional[str] = None, from_name: Optional[str] = None
+) -> Optional[str]:
     """Raises httpx.HTTPStatusError/RequestError on failure — the caller
     decides how to surface that (the code row is already committed either
     way, same trade-off the old send_invite_email() had). Returns Resend's
@@ -846,6 +848,15 @@ async def _send_via_resend(to_email: str, subject: str, html: str) -> Optional[s
     if not settings.resend_api_key or not settings.from_email:
         raise RuntimeError("RESEND_API_KEY/FROM_EMAIL not configured")
 
+    # text/from_name (2026-10-09): a plain-text part and a human sender
+    # name both lower spam scoring; optional so existing callers are as-is.
+    sender = settings.from_email
+    if from_name and "<" not in sender:
+        sender = f'"{re.sub(r"[<>\"\r\n]", "", from_name)}" <{sender}>'
+    message = {"from": sender, "to": [to_email], "subject": subject, "html": html}
+    if text:
+        message["text"] = text
+
     async with httpx.AsyncClient(timeout=30.0) as client:
         resp = await client.post(
             "https://api.resend.com/emails",
@@ -853,12 +864,7 @@ async def _send_via_resend(to_email: str, subject: str, html: str) -> Optional[s
                 "Authorization": f"Bearer {settings.resend_api_key}",
                 "Content-Type": "application/json",
             },
-            json={
-                "from": settings.from_email,
-                "to": [to_email],
-                "subject": subject,
-                "html": html,
-            },
+            json=message,
         )
         resp.raise_for_status()
         body = resp.json()
