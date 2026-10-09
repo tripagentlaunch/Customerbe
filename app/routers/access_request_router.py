@@ -5,6 +5,8 @@ import httpx
 from fastapi import APIRouter, Body, Depends, HTTPException
 
 from app.dependencies.admin_auth import require_admin_key
+from app.dependencies.csrf import require_csrf_header
+from app.dependencies.rate_limit import rate_limit_access_request
 from app.services import access_request_service
 
 _log = logging.getLogger("hotel_proxy")
@@ -14,13 +16,18 @@ router = APIRouter(prefix="/access-requests", tags=["access-requests"])
 _VALIDATION_STATUS = {
     "missing_fields": 400,
     "bad_email": 400,
+    "bad_name": 400,
+    "bad_phone": 400,
+    "bad_field": 400,
 }
 
 
 # Public, unauthenticated — same posture as invite_router.py's redeem/capture:
 # a stranger applying for an invitation via request-access.html has no
-# session yet.
-@router.post("")
+# session yet. Hardened 2026-10-09: the CSRF header forces a CORS preflight
+# (main.py's origin allowlist blocks it for other sites), and each IP gets 5
+# submissions per 10 minutes. Field validation is in the service.
+@router.post("", dependencies=[Depends(require_csrf_header), Depends(rate_limit_access_request)])
 async def create_access_request(payload: dict = Body(default={})):
     try:
         result = access_request_service.create_access_request(payload)

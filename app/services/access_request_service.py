@@ -10,7 +10,34 @@ from app.services import invite_service
 
 _log = logging.getLogger("hotel_proxy")
 
-_EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+_EMAIL_RE = re.compile(r"^[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]+@[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)+$")
+# Letters (any script), spaces and . ' - only: no digits, markup or symbols.
+_NAME_RE = re.compile(r"^[^\W\d_](?:[^\W\d_]|[ .'\-])*$")
+# Indian mobile: 10 digits starting 6-9, optionally written with 91 / +91 / 0.
+_IN_MOBILE_RE = re.compile(r"^(?:\+?91|0)?([6-9]\d{9})$")
+_CONTROL_RE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f\u200b-\u200f\u2028\u2029\ufeff]")
+_MAX = {"first_name": 50, "last_name": 50, "email": 254, "reason": 500, "city": 100, "travel_date": 100, "destination": 100}
+
+
+def _clean(value, field: str) -> Optional[str]:
+    """String fields only (a list/dict/number in the JSON is rejected, not
+    coerced), invisible/control characters removed, whitespace collapsed.
+    None when the value isn't a string or is longer than the field allows."""
+    if value is None:
+        return ""
+    if not isinstance(value, str):
+        return None
+    value = re.sub(r"\s+", " ", _CONTROL_RE.sub("", value)).strip()
+    return value if len(value) <= _MAX[field] else None
+
+
+def normalize_in_mobile(raw) -> Optional[str]:
+    """'+91 98765 43210', '09876543210', '9876543210' -> '+919876543210'.
+    None for anything that isn't a valid Indian mobile."""
+    if not isinstance(raw, str):
+        return None
+    m = _IN_MOBILE_RE.match(re.sub(r"[\s\-()]", "", raw))
+    return f"+91{m.group(1)}" if m else None
 
 # Phase 5 is finished (2026-09-16, direct request): the real invitation
 # email now exists (invite_service._invitation_approved_request_email_html
@@ -48,22 +75,36 @@ def create_access_request(payload: dict) -> dict:
     travel_date/destination are optional free text, matching
     enquire.html's existing dates/destination field convention — not
     required, unlike name/email/phone."""
-    first_name = (payload.get("first_name") or "").strip()
-    last_name = (payload.get("last_name") or "").strip()
-    email = (payload.get("email") or "").strip().lower()
-    phone = (payload.get("phone") or "").strip()
-    city = (payload.get("city") or "").strip() or None
-    reason = (payload.get("reason") or "").strip()
-    travel_date = (payload.get("travel_date") or "").strip() or None
-    destination = (payload.get("destination") or "").strip() or None
+    # Server-side validation is the real gate (2026-10-09): the form's own
+    # checks are a convenience and anyone can POST here directly. Values
+    # go to PostgREST as JSON parameters (no SQL is built from them), and
+    # every place they're rendered escapes them; these rules keep junk,
+    # markup and oversized input out of the table in the first place.
+    if not isinstance(payload, dict):
+        return {"ok": False, "error": "missing_fields"}
+    cleaned = {f: _clean(payload.get(f), f) for f in _MAX}
+    too_long = [f for f, v in cleaned.items() if v is None]
+    if too_long:
+        return {"ok": False, "error": "bad_field", "field": too_long[0]}
+    first_name, last_name = cleaned["first_name"], cleaned["last_name"]
+    email = cleaned["email"].lower()
+    reason = cleaned["reason"]
+    city = cleaned["city"] or None
+    travel_date = cleaned["travel_date"] or None
+    destination = cleaned["destination"] or None
 
     # Required: name, email, mobile. last_name (a single-word name) and
     # reason ("Anything we should know · optional" on the form) may be empty
     # (2026-10-08, direct request).
-    if not first_name or not email or not phone:
+    if not first_name or not email or not payload.get("phone"):
         return {"ok": False, "error": "missing_fields"}
+    if not _NAME_RE.match(first_name) or (last_name and not _NAME_RE.match(last_name)):
+        return {"ok": False, "error": "bad_name"}
     if not _EMAIL_RE.match(email):
         return {"ok": False, "error": "bad_email"}
+    phone = normalize_in_mobile(payload.get("phone"))
+    if not phone:
+        return {"ok": False, "error": "bad_phone"}
 
     client = _require_client()
     row = {

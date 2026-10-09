@@ -1,3 +1,4 @@
+import html as html_lib
 from typing import Optional
 from typing import Optional
 import asyncio
@@ -725,8 +726,10 @@ def _referral_invitation_email_html(
     tripagent_url = "https://www.tripagent.vip"
     unsubscribe_url = f"{tripagent_url}/unsubscribe"
 
-    html = html.replace("{{FRIEND_NAME}}", friend_name)
-    html = html.replace("{{INVITER_NAME}}", inviter_name)
+    # Names are user-supplied: escaped so they can't inject markup or
+    # links into an email sent from our domain.
+    html = html.replace("{{FRIEND_NAME}}", html_lib.escape(friend_name))
+    html = html.replace("{{INVITER_NAME}}", html_lib.escape(inviter_name))
     html = html.replace("{{INVITATION_URL}}", invitation_url)
     html = html.replace("{{TRIPAGENT_URL}}", tripagent_url)
     html = html.replace("{{UNSUBSCRIBE_URL}}", unsubscribe_url)

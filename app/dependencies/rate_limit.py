@@ -48,3 +48,9 @@ def rate_limit_otp_verify(request: Request) -> None:
     makes brute-forcing a 6-digit code (1,000,000 possibilities) wildly
     impractical well before Supabase's own short OTP expiry even matters."""
     _check(f"otp-verify:{_client_ip(request)}", window_seconds=300, max_requests=10)
+
+def rate_limit_access_request(request: Request) -> None:
+    """Throttles the public Request Access form per client IP — 5
+    submissions per 10 minutes. Same in-memory, per-process caveat as the
+    OTP limits above."""
+    _check(f"access-request:{_client_ip(request)}", window_seconds=600, max_requests=5)
