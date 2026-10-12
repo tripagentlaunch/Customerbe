@@ -18,6 +18,7 @@ from app.anaya_v6 import (
 )
 from app.anaya_v6.action_manager import propose_and_execute
 from app.anaya_v6.model_gateway import ModelGateway, get_model_gateway
+from app.services import api_usage
 from app.anaya_v6.tools import budget_tools
 from app.anaya_v6.tools.compare_tools import flight_compare, hotel_compare
 
@@ -233,6 +234,10 @@ async def handle_turn(
     today = date.today()
 
     await _resolve_identity_if_needed(state, channel, identity_hint)
+    # Usage attribution for this turn's paid calls (no extra lookup: the id
+    # identity resolution already put on state).
+    if state.member_id:
+        api_usage.set_context(member_id=state.member_id)
 
     state.engine_state.setdefault("active_intents", [])
     state.engine_state.setdefault("has_recommended", False)

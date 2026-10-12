@@ -19,6 +19,8 @@ from typing import Optional, Any, Protocol
 
 import anthropic
 
+from app.services import api_usage
+
 _log = logging.getLogger("anaya_v6.model_gateway")
 
 DEFAULT_MODEL = "claude-haiku-4-5-20251001"
@@ -51,7 +53,9 @@ class ClaudeProvider:
             raise RuntimeError(
                 "ANTHROPIC_API_KEY is not set. Add it to backend/.env before using Anaya V6."
             )
-        self._client = anthropic.AsyncAnthropic(api_key=api_key)
+        # Usage tracking: skip this forwarding module so `operation` names
+        # the anaya_v6 function that asked for the call.
+        self._client = api_usage.track_anthropic(anthropic.AsyncAnthropic(api_key=api_key), skip_modules=(__name__,))
         self._model = model or os.environ.get("ANAYA_V6_MODEL", "").strip() or DEFAULT_MODEL
 
     async def call_tool(self, *, system: str, messages: list[dict], tool: dict, max_tokens: int) -> ModelResponse:

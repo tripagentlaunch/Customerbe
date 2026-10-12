@@ -19,10 +19,10 @@ existing concierge-chat React frontend can point at this route unchanged
 import logging
 import uuid
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 
 from app.models.ai_models import ConciergeChatRequest, ConciergeChatResponse
-from app.services import aanya_flow_v3, chat_enquiry_service
+from app.services import api_usage, aanya_flow_v3, chat_enquiry_service
 from app.services.session_store import SessionState, get_session_store
 
 router = APIRouter(prefix="/ai", tags=["ai-v3"])
@@ -62,9 +62,13 @@ async def _maybe_create_enquiry(session: SessionState) -> None:
 
 
 @router.post("/concierge/chat/v3", response_model=ConciergeChatResponse)
-async def concierge_chat_v3(payload: ConciergeChatRequest):
+async def concierge_chat_v3(payload: ConciergeChatRequest, request: Request = None):
     session_id = payload.session_id or f"anon-{uuid.uuid4()}"
     session = get_session_store().get(f"v3:{session_id}")
+    # Usage attribution for every paid call this turn makes (scoped to this
+    # request's task): session/enquiry ids + the member's auth uid if signed in.
+    api_usage.set_context(meta=api_usage.request_meta(
+        request, session_id=session_id, enquiry_id=session.enquiry_id, flow="aanya_v3"))
 
     try:
         result = await aanya_flow_v3.advance(session, payload.query)

@@ -5,6 +5,7 @@ import time
 import httpx
 from typing import Optional
 from app.config import settings
+from app.services import api_usage
 
 
 def verify_sinch_signature(raw_body: bytes, headers: dict) -> bool:
@@ -107,6 +108,8 @@ def send_whatsapp(to_number: str, body: str) -> dict:
             auth=(settings.sinch_api_username, settings.sinch_api_password),
             timeout=10,
         )
+        api_usage.record("whatsapp", ok=resp.is_success,
+                         meta=None if resp.is_success else {"status": resp.status_code})
         resp.raise_for_status()
         return {"status": "sent", "to": to_number}
     except Exception as exc:

@@ -3,10 +3,10 @@ import logging
 import re
 import uuid
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 
 from app.models.ai_models import ConciergeChatRequest, ConciergeChatResponse
-from app.services import aanya_flow, chat_enquiry_service
+from app.services import api_usage, aanya_flow, chat_enquiry_service
 from app.services.session_store import SessionState, get_session_store
 from app.services.summarize_conversation import get_summarizer
 
@@ -74,9 +74,13 @@ async def _maybe_update_enquiry(session: SessionState, enquiry_update: Optional[
 
 
 @router.post("/concierge/chat", response_model=ConciergeChatResponse)
-async def concierge_chat(payload: ConciergeChatRequest):
+async def concierge_chat(payload: ConciergeChatRequest, request: Request = None):
     session_id = payload.session_id or f"anon-{uuid.uuid4()}"
     session = get_session_store().get(session_id)
+    # Usage attribution for every paid call this turn makes (scoped to this
+    # request's task): session/enquiry ids + the member's auth uid if signed in.
+    api_usage.set_context(meta=api_usage.request_meta(
+        request, session_id=session_id, enquiry_id=session.enquiry_id, flow="aanya"))
 
     if _HUMAN_HANDOFF_RE.search(payload.query):
         await _maybe_create_enquiry(session)

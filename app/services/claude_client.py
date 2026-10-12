@@ -19,6 +19,8 @@ import re
 
 import anthropic
 
+from app.services import api_usage
+
 from app.services import concierge_tools
 from app.services.session_store import SessionState
 
@@ -162,7 +164,7 @@ class ClaudeClient:
             )
         # Async client: tool execution needs to await flight_service's own
         # async httpx calls, so the whole ask() path is async end to end.
-        self._client = anthropic.AsyncAnthropic(api_key=api_key)
+        self._client = api_usage.track_anthropic(anthropic.AsyncAnthropic(api_key=api_key))
 
     async def ask(self, message: str, session: SessionState,
                   retrieved_context: list[dict] | None = None) -> dict:

@@ -15,6 +15,7 @@ from supabase import create_client
 from supabase_auth.errors import AuthApiError
 
 from app.config import settings
+from app.services import api_usage
 from app.dependencies.supabase_client import get_supabase_admin_client
 
 _log = logging.getLogger("hotel_proxy")
@@ -300,7 +301,8 @@ async def create_invitation_code(
             )
             subject = "Your invitation to TripAgent"
         try:
-            resend_id = await _send_via_resend(to_email=recipient_email, subject=subject, html=html)
+            with api_usage.usage_context(member_code=code):
+                resend_id = await _send_via_resend(to_email=recipient_email, subject=subject, html=html)
         except (httpx.HTTPStatusError, httpx.RequestError, RuntimeError) as exc:
             if raise_on_email_error:
                 raise
@@ -919,15 +921,22 @@ async def _send_via_resend(
     if text:
         message["text"] = text
 
+    operation = api_usage.caller_operation()
     async with httpx.AsyncClient(timeout=30.0) as client:
-        resp = await client.post(
-            "https://api.resend.com/emails",
-            headers={
-                "Authorization": f"Bearer {settings.resend_api_key}",
-                "Content-Type": "application/json",
-            },
-            json=message,
-        )
+        try:
+            resp = await client.post(
+                "https://api.resend.com/emails",
+                headers={
+                    "Authorization": f"Bearer {settings.resend_api_key}",
+                    "Content-Type": "application/json",
+                },
+                json=message,
+            )
+        except httpx.HTTPError as exc:
+            api_usage.record("resend", operation=operation, ok=False, meta={"error": type(exc).__name__})
+            raise
+        api_usage.record("resend", operation=operation, ok=resp.is_success,
+                         meta=None if resp.is_success else {"status": resp.status_code})
         resp.raise_for_status()
         body = resp.json()
         resend_id = body.get("id") if isinstance(body, dict) else None

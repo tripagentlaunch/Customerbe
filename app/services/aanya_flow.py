@@ -76,6 +76,8 @@ from datetime import date
 
 import anthropic
 
+from app.services import api_usage
+
 from app.services.session_store import SessionState
 from app.services.summarize_conversation import DETAIL_FIELDS
 
@@ -94,7 +96,7 @@ def _get_client() -> anthropic.AsyncAnthropic:
         api_key = os.environ.get("ANTHROPIC_API_KEY", "").strip()
         if not api_key:
             raise RuntimeError("ANTHROPIC_API_KEY is not set.")
-        _client = anthropic.AsyncAnthropic(api_key=api_key)
+        _client = api_usage.track_anthropic(anthropic.AsyncAnthropic(api_key=api_key))
     return _client
 
 

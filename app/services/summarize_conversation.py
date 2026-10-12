@@ -41,6 +41,8 @@ import os
 
 import anthropic
 
+from app.services import api_usage
+
 from app.services.session_store import SessionState
 
 _log = logging.getLogger("summarize_conversation")
@@ -472,7 +474,7 @@ class ConversationSummarizer:
                 "ANTHROPIC_API_KEY is not set. Add it to backend/.env before "
                 "summarization can run."
             )
-        self._client = anthropic.AsyncAnthropic(api_key=api_key)
+        self._client = api_usage.track_anthropic(anthropic.AsyncAnthropic(api_key=api_key))
 
     async def summarize(self, session: SessionState) -> dict:
         """Returns {"summary": str, "detail": dict}. `detail` holds every

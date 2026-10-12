@@ -16,6 +16,7 @@ itself.
 """
 
 
+import hashlib
 import logging
 import os
 
@@ -24,6 +25,7 @@ from pydantic import BaseModel
 
 from app.anaya_v6 import trip_memory
 from app.anaya_v6.orchestrator import handle_turn
+from app.services import api_usage
 
 router = APIRouter(prefix="/ai", tags=["ai-v6-whatsapp"])
 _log = logging.getLogger("ai_concierge_v6_whatsapp")
@@ -93,6 +95,11 @@ async def concierge_whatsapp_v6(payload: WhatsAppInboundMessage):
         )
 
     trip_id = f"wa-{payload.from_number}"
+    # Usage attribution (scoped to this request's task). trip_id embeds the
+    # phone number, so only a short hash goes into meta (never PII);
+    # orchestrator.handle_turn adds member_id once identity is resolved.
+    api_usage.set_context(meta={"trip_id": "wa-" + hashlib.sha256(trip_id.encode()).hexdigest()[:12],
+                                "flow": "anaya_v6_whatsapp"})
     state = trip_memory.get_or_create(trip_id, channel="whatsapp")
     if _already_processed(state, payload.message_id):
         trip_memory.save(state)

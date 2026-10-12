@@ -6,6 +6,7 @@ import time
 import httpx
 
 from app.config import settings
+from app.services import api_usage
 
 _TIMEOUT = httpx.Timeout(30.0)
 _log = logging.getLogger("flight_proxy")
@@ -42,7 +43,24 @@ _RETRY_ATTEMPTS = 3
 _RETRY_DELAY_SECONDS = 0.5
 
 
+def _record_usage(operation, label: str, response, attempts: int, exc=None) -> None:
+    """One api_usage row per TripSure call (units = attempts actually sent;
+    model = endpoint path). Never raises."""
+    try:
+        endpoint = response.request.url.path if response is not None else label
+    except Exception:  # noqa: BLE001
+        endpoint = label
+    meta = {"label": label}
+    if response is not None:
+        meta["status"] = response.status_code
+    if exc is not None:
+        meta["error"] = type(exc).__name__
+    api_usage.record("tripsure_flight", operation=operation, model=endpoint, units=max(attempts, 1),
+                     ok=response is not None and response.status_code < 400, meta=meta)
+
+
 async def _with_retry(make_request, *, label: str) -> httpx.Response:
+    operation = api_usage.caller_operation()
     last_exc: httpx.TransportError | None = None
     response: httpx.Response | None = None
     for attempt in range(1, _RETRY_ATTEMPTS + 1):
@@ -60,6 +78,7 @@ async def _with_retry(make_request, *, label: str) -> httpx.Response:
             continue
 
         if response.status_code not in _RETRYABLE_STATUS:
+            _record_usage(operation, label, response, attempt)
             return response
         _log.warning(
             "[FLIGHT_RETRY] %s attempt %s/%s: HTTP %s body=%r",
@@ -68,6 +87,7 @@ async def _with_retry(make_request, *, label: str) -> httpx.Response:
         if attempt < _RETRY_ATTEMPTS:
             await asyncio.sleep(_RETRY_DELAY_SECONDS)
 
+    _record_usage(operation, label, response, _RETRY_ATTEMPTS, last_exc if response is None else None)
     if response is not None:
         return response
     raise last_exc

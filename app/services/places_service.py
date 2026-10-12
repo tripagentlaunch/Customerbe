@@ -59,7 +59,7 @@ import asyncio
 import httpx
 
 from app.config import settings
-from app.services import pexels_service
+from app.services import api_usage, pexels_service
 
 _GENERIC_WORDS = {
     "the", "and", "of", "a", "an", "in", "at", "near", "hotel", "hotels",
@@ -121,15 +121,26 @@ async def _search_text(query: str, field_mask: str, max_results: int, place_type
     body: dict = {"textQuery": query, "maxResultCount": max_results}
     if place_type:
         body["includedType"] = place_type
-    response = await client.post(
-        _SEARCH_URL,
-        json=body,
-        headers={
-            "X-Goog-Api-Key": settings.google_places_api_key,
-            "X-Goog-FieldMask": field_mask,
-            "Content-Type": "application/json",
-        },
-    )
+    # Usage tracking: operation = the public function that asked (lookup_place /
+    # search_nearby), not this shared helper. Only real upstream requests reach
+    # here — _CACHE hits return before calling _search_text.
+    operation = api_usage.caller_operation()
+    try:
+        response = await client.post(
+            _SEARCH_URL,
+            json=body,
+            headers={
+                "X-Goog-Api-Key": settings.google_places_api_key,
+                "X-Goog-FieldMask": field_mask,
+                "Content-Type": "application/json",
+            },
+        )
+    except httpx.HTTPError as exc:
+        api_usage.record("google_places", operation=operation, model="places.searchText", ok=False,
+                         meta={"error": type(exc).__name__})
+        raise
+    api_usage.record("google_places", operation=operation, model="places.searchText",
+                     ok=response.is_success, meta=None if response.is_success else {"status": response.status_code})
     response.raise_for_status()
     return response.json()
 
@@ -257,6 +268,8 @@ async def fetch_photo_bytes(photo_ref: str) -> Optional[tuple[bytes, str]]:
                 _PHOTO_URL_TEMPLATE.format(photo_name=photo_ref),
                 params={"maxWidthPx": 600, "key": settings.google_places_api_key},
             )
+            api_usage.record("google_places", model="places.photo", ok=response.is_success,
+                             meta=None if response.is_success else {"status": response.status_code})
             response.raise_for_status()
             content_type = response.headers.get("content-type", "image/jpeg")
             return response.content, content_type

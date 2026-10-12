@@ -14,10 +14,11 @@ import logging
 import os
 import uuid
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 
 from app.anaya_v6.orchestrator import handle_turn
 from app.models.ai_models import ConciergeChatRequest, ConciergeChatResponse
+from app.services import api_usage
 
 router = APIRouter(prefix="/ai", tags=["ai-v6"])
 _log = logging.getLogger("ai_concierge_v6")
@@ -49,12 +50,15 @@ def _split_bubbles(text: str) -> list[str]:
 
 
 @router.post("/concierge/v6/chat", response_model=ConciergeChatResponse)
-async def concierge_chat_v6(payload: ConciergeChatRequest):
+async def concierge_chat_v6(payload: ConciergeChatRequest, request: Request = None):
     if _kill_switch_enabled():
         _log.warning("[AI_CONCIERGE_V6] ANAYA_V6_ENABLED=false — refusing without calling model/tools")
         return _KILL_SWITCH_RESPONSE
 
     session_id = payload.session_id or f"anon-{uuid.uuid4()}"
+    # Usage attribution (scoped to this request's task); orchestrator.handle_turn
+    # adds member_id once identity is resolved.
+    api_usage.set_context(meta=api_usage.request_meta(request, trip_id=session_id, flow="anaya_v6_web"))
     try:
         result = await handle_turn(session_id, "web", payload.query)
     except Exception as exc:  # noqa: BLE001 - upstream failure -> clean fallback, never a 500 leak
