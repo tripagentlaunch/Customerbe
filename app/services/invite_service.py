@@ -730,7 +730,7 @@ def capture_details(code: str, payload: dict) -> dict:
 _FINE_PRINT = (
     "This key is issued to this email address alone and cannot be passed on. "
     "Questions, or would rather speak with us directly? Write to your advisor "
-    "at maison@tripsure.com."
+    "at invite@tripagent.vip."
 )
 
 
