@@ -54,3 +54,10 @@ def rate_limit_access_request(request: Request) -> None:
     submissions per 10 minutes. Same in-memory, per-process caveat as the
     OTP limits above."""
     _check(f"access-request:{_client_ip(request)}", window_seconds=600, max_requests=5)
+
+
+def rate_limit_invite_redeem(request: Request) -> None:
+    """Throttles code entry per client IP — 10 tries per 10 minutes. Codes
+    now stay valid as a member's login (2026-10-09), so they need the same
+    guessing protection as the OTP endpoints."""
+    _check(f"invite-redeem:{_client_ip(request)}", window_seconds=600, max_requests=10)

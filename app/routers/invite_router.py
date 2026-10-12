@@ -1,5 +1,6 @@
-from fastapi import APIRouter, Body, HTTPException, Response
+from fastapi import APIRouter, Body, Depends, HTTPException, Response
 
+from app.dependencies.rate_limit import rate_limit_invite_redeem
 from app.dependencies.session_cookie import set_session_cookies
 from app.services import invite_service
 
@@ -31,7 +32,7 @@ def _consume_session(result: dict, response: Response) -> dict:
     return result
 
 
-@router.post("/{code}/redeem")
+@router.post("/{code}/redeem", dependencies=[Depends(rate_limit_invite_redeem)])
 async def invite_redeem(code: str, response: Response, details: dict = Body(default={})):
     try:
         result = invite_service.redeem_invite(code.strip().upper(), details)

@@ -414,6 +414,11 @@ def redeem_invite(code: str, details: Optional[dict] = None) -> dict:
     if not rows:
         return {"valid": False, "error": "not_found"}
     row = rows[0]
+    if row["status"] == "redeemed":
+        # 2026-10-09 (direct request): a claimed code is its member's login,
+        # not a dead ticket — entering it again signs that member back in.
+        # Its invitation expiry no longer applies once claimed.
+        return _sign_in_with_claimed_code(client, row)
     if row["status"] != "unused":
         return {"valid": False, "used": True}
     # expires_at (now+14d, set by create_invitation_code()) is what the
@@ -582,6 +587,34 @@ def redeem_invite(code: str, details: Optional[dict] = None) -> dict:
         # same values the client already sees reflected in its own request.
         "email": email,
         "name": member["name"],
+    }
+
+
+def _sign_in_with_claimed_code(client, row: dict) -> dict:
+    """Session for the member who claimed this code, or the old 'already
+    claimed' answer when that member is gone or inactive."""
+    member_id = row.get("redeemed_by")
+    members = (
+        client.table("site_members").select("id,name,email,status").eq("id", member_id).limit(1).execute().data
+        if member_id else []
+    )
+    member = members[0] if members else None
+    email = ((member or {}).get("email") or "").strip().lower()
+    if not member or member.get("status") not in (None, "active") or not email:
+        return {"valid": False, "used": True}
+    link = _retry_on_connect_error(lambda: client.auth.admin.generate_link({"type": "magiclink", "email": email}))
+    session = _issue_session_for_new_auth_user(email, link.properties.hashed_token)
+    if not session:
+        return {"valid": False, "used": True}
+    return {
+        "valid": True,
+        "returning": True,
+        "months": max(1, min(24, round(_GRANT_DAYS / 30))),
+        "memberId": member["id"],
+        "advisorName": None,
+        "session": session,
+        "email": email,
+        "name": member.get("name"),
     }
 
 
