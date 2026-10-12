@@ -95,7 +95,7 @@ def create_access_request(payload: dict) -> dict:
     destination = cleaned["destination"] or None
 
     # Required: name, email, mobile. last_name (a single-word name) and
-    # reason ("Anything we should know · optional" on the form) may be empty
+    # reason ("Tell us about your travel plans · optional" on the form) may be empty
     # (2026-10-08, direct request).
     if not first_name or not email or not payload.get("phone"):
         return {"ok": False, "error": "missing_fields"}
@@ -115,7 +115,9 @@ def create_access_request(payload: dict) -> dict:
         "email": email,
         "phone": phone,
         "city": city,
-        "reason": reason or None,
+        # "" not None: prod's site_access_requests.reason is NOT NULL (dev's
+        # isn't), so an empty optional note failed only in production.
+        "reason": reason or "",
         "travel_date": travel_date,
         "destination": destination,
         "status": "pending",
