@@ -318,10 +318,10 @@ def _request_received_email(first_name: str) -> tuple[str, str]:
     serif, sans = "Georgia,'Times New Roman',serif", "Helvetica,Arial,sans-serif"
     body = f"""<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="color-scheme" content="dark"><title>We have your request</title></head>
-<body style="margin:0;padding:0;background-color:#0f0d0b;">
+<meta name="color-scheme" content="light"><title>We have your request</title></head>
+<body style="margin:0;padding:0;background-color:#ffffff;">
   <div style="display:none;max-height:0;overflow:hidden;opacity:0;">Your request is with the Desk. A person reads every one.</div>
-  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="#0f0d0b" style="background-color:#0f0d0b;">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="#ffffff" style="background-color:#ffffff;">
     <tr><td align="center" style="padding:24px 12px;">
       <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="#141210" style="width:100%;max-width:600px;background-color:#141210;border:1px solid #2e2820;border-radius:10px;">
         <tr><td align="center" bgcolor="#1c1915" style="padding:30px 28px;background-color:#1c1915;border-radius:10px 10px 0 0;">
@@ -341,7 +341,7 @@ def _request_received_email(first_name: str) -> tuple[str, str]:
           <p style="margin:0;font-family:{sans};font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:#a89e8e;">TripAgent &middot; Private travel, personally arranged</p>
         </td></tr>
       </table>
-      <p style="margin:16px 0 0;font-family:{sans};font-size:11px;line-height:1.6;color:#6f675b;max-width:560px;">You received this because this address was used to request an invitation at TripAgent. If that wasn&rsquo;t you, you can ignore this email.</p>
+      <p style="margin:16px 0 0;font-family:{sans};font-size:11px;line-height:1.6;color:#8a8377;max-width:560px;">You received this because this address was used to request an invitation at TripAgent. If that wasn&rsquo;t you, you can ignore this email.</p>
     </td></tr>
   </table>
 </body></html>"""
@@ -367,7 +367,7 @@ async def send_request_received_email(email: str, first_name: str) -> None:
             subject="We have your request — TripAgent",
             html=html_body,
             text=text,
-            from_name="The TripAgent Desk",
+            from_name="TripAgent Desk",
         )
     except Exception as exc:  # noqa: BLE001
         _log.error("[ACCESS_REQUEST] confirmation email to %s failed: %s", email, exc)
