@@ -11,13 +11,22 @@ from typing import Optional
 
 from supabase_auth.errors import AuthApiError
 
-from app.dependencies.supabase_client import get_supabase_admin_client
+from app.dependencies.supabase_client import get_session_auth_client, get_supabase_admin_client
 
 _log = logging.getLogger("auth_service")
 
 
 def _require_client():
     client = get_supabase_admin_client()
+    if client is None:
+        raise RuntimeError("SUPABASE_URL/SUPABASE_SERVICE_ROLE_KEY are not configured")
+    return client
+
+
+def _require_session_client():
+    # verify_otp/refresh_session must never run on the admin client — see
+    # get_supabase_admin_client()'s docstring.
+    client = get_session_auth_client()
     if client is None:
         raise RuntimeError("SUPABASE_URL/SUPABASE_SERVICE_ROLE_KEY are not configured")
     return client
@@ -47,7 +56,7 @@ def request_otp(email: str) -> dict:
 def verify_otp(email: str, token: str) -> dict:
     client = _require_client()
     try:
-        resp = client.auth.verify_otp({"email": email.strip(), "token": token.strip(), "type": "email"})
+        resp = _require_session_client().verify_otp({"email": email.strip(), "token": token.strip(), "type": "email"})
     except AuthApiError as exc:
         return {"ok": False, "error": str(exc)}
     except Exception as exc:  # noqa: BLE001 - network/TLS failure talking to Supabase auth
@@ -100,7 +109,7 @@ def fetch_session_member(access_token: Optional[str], refresh_token: Optional[st
         if not refresh_token:
             return {"signed_in": False, "member": None, "refreshed_tokens": None}
         try:
-            refreshed = client.auth.refresh_session(refresh_token)
+            refreshed = _require_session_client().refresh_session(refresh_token)
         except Exception:  # noqa: BLE001 - expired/revoked refresh token is just "signed out", not an error
             return {"signed_in": False, "member": None, "refreshed_tokens": None}
         if not refreshed.session or not refreshed.user:

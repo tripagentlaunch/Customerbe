@@ -7,16 +7,14 @@ import re
 import secrets
 import time
 from datetime import datetime, timedelta, timezone
-from functools import lru_cache
 
 import httpx
 from postgrest.exceptions import APIError
-from supabase import create_client
 from supabase_auth.errors import AuthApiError
 
 from app.config import settings
 from app.services import api_usage
-from app.dependencies.supabase_client import get_supabase_admin_client
+from app.dependencies.supabase_client import get_session_auth_client, get_supabase_admin_client
 
 _log = logging.getLogger("hotel_proxy")
 
@@ -106,45 +104,15 @@ def _retry_on_connect_error(fn):
     raise last_exc
 
 
-@lru_cache
-def _get_session_issuer_client():
-    """A second, long-lived Client — deliberately separate from
-    get_supabase_admin_client()'s cached singleton, and used ONLY for
-    verify_otp() during session issuance (see _issue_session_for_new_auth_user).
-    Never used for anything else (no table queries, no admin calls), so its
-    session state being overwritten by whichever member most recently
-    claimed an invite is harmless — nothing else ever reads that state; the
-    caller only ever uses verify_otp()'s own return value.
-
-    FIXED (2026-09-23, direct request — found during real testing, not
-    assumed): this used to be a fresh `create_client(...)` per call,
-    closed immediately after ("a disposable client, used once and
-    discarded"). That was true in intent but wrong in execution — first
-    confirmed as a genuine leak (never actually closed, which itself
-    caused the reported "Connection reset by peer" errors on the admin
-    API by exhausting connections over repeated redeems); then, even
-    after adding an explicit close(), opening + immediately tearing down
-    a brand-new httpsx connection on every single call reproduced its own
-    connection-level failures live (ConnectTimeout on the TLS handshake)
-    — rapid-fire fresh connections are themselves the problem in this
-    environment's outbound networking, not something a bigger retry count
-    papers over. A second cached, reused client is the actual fix: it
-    still never touches the service-role client's session (the original
-    bug this design exists to avoid), but it isn't rebuilt from scratch on
-    every request either."""
-    return create_client(settings.supabase_url, settings.supabase_service_role_key)
-
-
 def _issue_session_for_new_auth_user(email: str, hashed_token: str) -> Optional[dict]:
     """Redeems a magic-link token for a real access/refresh token pair, via
-    _get_session_issuer_client() — never the shared admin client from
-    _require_client() (see that function's docstring for why: verify_otp()
-    mutates whichever Client it's called on to that user's own session,
-    which silently downgraded the service-role client the first time this
-    ran directly on it)."""
-    scratch_client = _get_session_issuer_client()
+    get_session_auth_client() — never the shared admin client from
+    _require_client() (see get_supabase_admin_client()'s docstring for why).
+    The old second supabase Client here still had auto-refresh on, so it
+    kept rotating — and so revoking — the last member's refresh token."""
+    session_client = get_session_auth_client()
     verified = _retry_on_connect_error(
-        lambda: scratch_client.auth.verify_otp({"token_hash": hashed_token, "type": "magiclink"})
+        lambda: session_client.verify_otp({"token_hash": hashed_token, "type": "magiclink"})
     )
     if not verified.session:
         return None
