@@ -64,6 +64,19 @@ from app.services import api_usage, pexels_service
 _GENERIC_WORDS = {
     "the", "and", "of", "a", "an", "in", "at", "near", "hotel", "hotels",
 }
+# Words many different places share — a brand ("Taj", "Oberoi") or a kind of
+# place ("Palace", "Resort"). They don't identify a place on their own, so a
+# match must agree on the name's other words (2026-10-21: "Taj Hari Mahal",
+# Jodhpur, was matching "Taj Mahal Tower, Mumbai" on the word "taj").
+_BRAND_WORDS = {
+    "taj", "vivanta", "oberoi", "trident", "leela", "itc", "welcomhotel", "welcomheritage", "marriott",
+    "ritz", "carlton", "hyatt", "hilton", "conrad", "westin", "sheraton", "regis", "four", "seasons",
+    "mandarin", "oriental", "peninsula", "raffles", "aman", "belmond", "rosewood", "shangri", "six",
+    "senses", "fairmont", "sofitel", "novotel", "kempinski", "anantara", "banyan", "tree",
+    "intercontinental", "radisson", "langham", "palace", "resort", "resorts", "spa", "lodge", "inn",
+    "suites", "villa", "villas", "retreat", "camp", "collection", "boutique", "grand", "luxury",
+    "heritage", "restaurant", "cafe", "bar", "lounge", "club",
+}
 
 # Shared, persistent client — created once, reused for every Places call
 # in this process. Avoids a fresh TLS handshake per request (see module
@@ -90,14 +103,16 @@ async def _distinctive_terms(name: str) -> list[str]:
 
 
 async def _is_relevant_match(query: str, place_display_name: str) -> bool:
-    """True only if the query's own distinctive word(s) appear in what
-    Places itself calls the place — never accepted on a bare top-result
-    (see this module's docstring for why that's unsafe)."""
+    """True only if the query's own distinctive words appear in what Places
+    itself calls the place — never accepted on a bare top-result (see this
+    module's docstring for why that's unsafe). Every non-brand word must
+    appear: one shared brand word ("Taj") is another hotel, not this one."""
     name_lower = (place_display_name or "").lower()
     terms = await _distinctive_terms(query)
     if not terms:
         return False
-    return any(term in name_lower for term in terms)
+    own = [t for t in terms if t not in _BRAND_WORDS]
+    return all(term in name_lower for term in own) if own else all(term in name_lower for term in terms)
 
 _SEARCH_URL = "https://places.googleapis.com/v1/places:searchText"
 _PHOTO_URL_TEMPLATE = "https://places.googleapis.com/v1/{photo_name}/media"
