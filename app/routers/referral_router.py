@@ -1,11 +1,11 @@
-from typing import Optional
 import logging
 
 import httpx
-from fastapi import APIRouter, Header, HTTPException, Depends
+from fastapi import APIRouter, HTTPException, Depends
 
 from app.models.referral_models import ReferralCreateRequest, ReferralCreateResponse
 from app.services import referral_service
+from app.dependencies.auth import get_access_token
 from app.dependencies.csrf import require_csrf_header
 
 router = APIRouter(prefix="/referrals", tags=["referrals"])
@@ -19,18 +19,9 @@ _VALIDATION_STATUS = {
 }
 
 
-def _extract_bearer(authorization: Optional[str]) -> str:
-    if not authorization or not authorization.lower().startswith("bearer "):
-        raise HTTPException(status_code=401, detail="missing_session")
-    token = authorization.split(" ", 1)[1].strip()
-    if not token:
-        raise HTTPException(status_code=401, detail="missing_session")
-    return token
-
-
 @router.post("", response_model=ReferralCreateResponse, dependencies=[Depends(require_csrf_header)])
-async def create_referral(payload: ReferralCreateRequest, authorization: Optional[str] = Header(default=None)):
-    token = _extract_bearer(authorization)
+async def create_referral(payload: ReferralCreateRequest, token: str = Depends(get_access_token)):
+    # The site signs members in with the ta_access_token cookie; a Bearer header still works.
     try:
         invite = await referral_service.create_referral(token, payload)
     except ValueError as exc:
