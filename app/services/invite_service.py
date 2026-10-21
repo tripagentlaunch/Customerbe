@@ -388,13 +388,18 @@ def redeem_invite(code: str, details: Optional[dict] = None) -> dict:
         # 2026-10-09 (direct request): a claimed code is its member's login,
         # not a dead ticket — entering it again signs that member back in.
         # Its invitation expiry no longer applies once claimed.
-        return _sign_in_with_claimed_code(client, row)
-    if row["status"] != "unused":
+        signed_in = _sign_in_with_claimed_code(client, row)
+        if signed_in is not None:
+            return signed_in
+        # 2026-10-21: the member who claimed it isn't in this project (codes
+        # copied from dev into prod point at dev members): claim it afresh
+        # rather than answer "already redeemed" for a code nobody here holds.
+    elif row["status"] != "unused":
         return {"valid": False, "used": True}
     # expires_at (now+14d, set by create_invitation_code()) is what the
     # invitation email promises — enforce it here, not just display it.
     # Older rows with no expires_at stay redeemable, as before.
-    if row.get("expires_at") and datetime.fromisoformat(row["expires_at"]) <= datetime.now(timezone.utc):
+    if row["status"] == "unused" and row.get("expires_at") and datetime.fromisoformat(row["expires_at"]) <= datetime.now(timezone.utc):
         return {"valid": False, "error": "expired"}
 
     pulled =_pull_access_request_details(client, row["access_request_id"]) if row.get("access_request_id") else {}
@@ -560,17 +565,20 @@ def redeem_invite(code: str, details: Optional[dict] = None) -> dict:
     }
 
 
-def _sign_in_with_claimed_code(client, row: dict) -> dict:
-    """Session for the member who claimed this code, or the old 'already
-    claimed' answer when that member is gone or inactive."""
+def _sign_in_with_claimed_code(client, row: dict) -> Optional[dict]:
+    """Session for the member who claimed this code; the old 'already claimed'
+    answer when that member is inactive or can't be signed in; None when no
+    such member exists in this project (the caller then claims the code anew)."""
     member_id = row.get("redeemed_by")
     members = (
         client.table("site_members").select("id,name,email,status").eq("id", member_id).limit(1).execute().data
         if member_id else []
     )
     member = members[0] if members else None
-    email = ((member or {}).get("email") or "").strip().lower()
-    if not member or member.get("status") not in (None, "active") or not email:
+    if not member:
+        return None
+    email = (member.get("email") or "").strip().lower()
+    if member.get("status") not in (None, "active") or not email:
         return {"valid": False, "used": True}
     link = _retry_on_connect_error(lambda: client.auth.admin.generate_link({"type": "magiclink", "email": email}))
     session = _issue_session_for_new_auth_user(email, link.properties.hashed_token)
