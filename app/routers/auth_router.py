@@ -30,6 +30,9 @@ _log = logging.getLogger("auth_router")
 
 @router.post("/request-otp", response_model=RequestOtpResponse, dependencies=[Depends(require_csrf_header), Depends(rate_limit_otp_request)])
 async def request_otp(payload: RequestOtpRequest):
+    # Per email as well as per network (2026-10-22): 3 codes per 5 minutes.
+    from app.dependencies.rate_limit import limit_contact
+    limit_contact("otp-email", payload.email, 300, 3)
     try:
         result = auth_service.request_otp(payload.email)
     except RuntimeError as exc:

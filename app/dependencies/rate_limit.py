@@ -61,3 +61,13 @@ def rate_limit_invite_redeem(request: Request) -> None:
     now stay valid as a member's login (2026-10-09), so they need the same
     guessing protection as the OTP endpoints."""
     _check(f"invite-redeem:{_client_ip(request)}", window_seconds=600, max_requests=10)
+
+
+# Per person, not only per network (2026-10-22): the same email or phone can't
+# register, ask for sign-in codes or be invited over and over from different
+# connections. Same in-memory, per-process caveat as the limits above. Raises
+# 429 like _check().
+def limit_contact(kind: str, value: str, window_seconds: int, max_requests: int) -> None:
+    key = "".join(ch for ch in (value or "").strip().lower() if not ch.isspace())
+    if key:
+        _check(f"{kind}:{key}", window_seconds=window_seconds, max_requests=max_requests)

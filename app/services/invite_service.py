@@ -259,6 +259,7 @@ async def create_invitation_code(
                 friend_name=recipient_name or "there",
                 inviter_name=referrer_full_name,
                 invitation_url=link,
+                invite_code=code,
             )
             subject = f"{referrer_first_name} has invited you to TripAgent"
         else:
@@ -749,6 +750,7 @@ def _referral_invitation_email_html(
     friend_name: str,
     inviter_name: str,
     invitation_url: str,
+    invite_code: str = "",
 ) -> str:
     """New Chic Stays-style referral invitation email (2026-09-27) — hero
     image, service icons, invitation box layout. Reads the template from
@@ -771,6 +773,7 @@ def _referral_invitation_email_html(
     html = html.replace("{{FRIEND_NAME}}", html_lib.escape(friend_name))
     html = html.replace("{{INVITER_NAME}}", html_lib.escape(inviter_name))
     html = html.replace("{{INVITATION_URL}}", invitation_url)
+    html = html.replace("{{INVITE_CODE}}", html_lib.escape(invite_code))
     html = html.replace("{{TRIPAGENT_URL}}", tripagent_url)
     html = html.replace("{{UNSUBSCRIBE_URL}}", unsubscribe_url)
     return html

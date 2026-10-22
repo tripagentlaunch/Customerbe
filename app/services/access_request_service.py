@@ -2,7 +2,7 @@ from typing import Optional
 import html
 import logging
 import re
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from postgrest.exceptions import APIError
 
@@ -107,7 +107,24 @@ def create_access_request(payload: dict) -> dict:
     if not phone:
         return {"ok": False, "error": "bad_phone"}
 
+    # One person, one open request (2026-10-22): the same email or phone within a
+    # day is the request already made, so no second row and no second
+    # "request received" email (a double submit used to send two).
+    from app.dependencies.rate_limit import limit_contact
+    limit_contact("access-request-email", email, 3600, 3)
+    limit_contact("access-request-phone", phone, 3600, 3)
+
     client = _require_client()
+    since = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()
+    try:
+        repeat = (client.table("site_access_requests").select("id").eq("status", "pending").gte("created_at", since)
+                  .or_(f"email.eq.{email},phone.eq.{phone}").order("created_at", desc=True).limit(1).execute().data)
+    except APIError as exc:
+        _log.warning("[ACCESS_REQUEST] repeat check failed: %s", exc)
+        repeat = []
+    if repeat:
+        return {"ok": True, "id": repeat[0]["id"], "email": email, "first_name": first_name, "repeat": True}
+
     row = {
         "first_name": first_name,
         "last_name": last_name or None,
