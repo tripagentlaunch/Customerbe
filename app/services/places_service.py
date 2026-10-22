@@ -116,6 +116,7 @@ async def _is_relevant_match(query: str, place_display_name: str) -> bool:
 
 _SEARCH_URL = "https://places.googleapis.com/v1/places:searchText"
 _PHOTO_URL_TEMPLATE = "https://places.googleapis.com/v1/{photo_name}/media"
+_DETAILS_URL_TEMPLATE = "https://places.googleapis.com/v1/places/{place_id}"
 
 # Field mask kept deliberately narrow — displayName/photos/location/id only.
 # Adding `rating` (or several other fields) would move this call from the
@@ -258,7 +259,7 @@ async def lookup_place(name: str, city: str) -> Optional[dict]:
     return result
 
 
-async def fetch_photo_bytes(photo_ref: str) -> Optional[tuple[bytes, str]]:
+async def fetch_photo_bytes(photo_ref: str, max_width: int = 600) -> Optional[tuple[bytes, str]]:
     """Fetches the actual JPEG bytes for a photo_ref returned by
     lookup_place(), using GOOGLE_PLACES_API_KEY server-side. Returns
     (bytes, content_type) or None on failure/missing key. The key never
@@ -281,7 +282,7 @@ async def fetch_photo_bytes(photo_ref: str) -> Optional[tuple[bytes, str]]:
             client = await _get_shared_client()
             response = await client.get(
                 _PHOTO_URL_TEMPLATE.format(photo_name=photo_ref),
-                params={"maxWidthPx": 600, "key": settings.google_places_api_key},
+                params={"maxWidthPx": max_width, "key": settings.google_places_api_key},
             )
             api_usage.record("google_places", model="places.photo", ok=response.is_success,
                              meta=None if response.is_success else {"status": response.status_code})
@@ -301,6 +302,29 @@ async def fetch_photo_bytes(photo_ref: str) -> Optional[tuple[bytes, str]]:
             return None
     print(f"[PLACES] photo media fetch failed for {photo_ref!r} after 3 attempts: {type(last_exc).__name__}: {last_exc}")
     return None
+
+
+async def fetch_place_photo_bytes(place_id: str, max_width: int = 600) -> Optional[tuple[bytes, str]]:
+    """The place's current first photo, by Google place id (2026-10-22). The
+    sourcing engine's city guides keep a photo name and the place id; a photo
+    name can expire, a place id can be kept, so when the name no longer works
+    the photo is found again from the place. Two live calls, nothing stored."""
+    if not settings.google_places_api_key or not place_id:
+        return None
+    try:
+        client = await _get_shared_client()
+        response = await client.get(
+            _DETAILS_URL_TEMPLATE.format(place_id=place_id),
+            headers={"X-Goog-Api-Key": settings.google_places_api_key, "X-Goog-FieldMask": "photos"},
+        )
+        api_usage.record("google_places", model="places.details.photos", ok=response.is_success,
+                         meta=None if response.is_success else {"status": response.status_code})
+        response.raise_for_status()
+        photos = response.json().get("photos") or []
+    except httpx.HTTPError as exc:
+        print(f"[PLACES] details for {place_id!r} failed: {type(exc).__name__}: {exc}")
+        return None
+    return await fetch_photo_bytes(photos[0]["name"], max_width) if photos and photos[0].get("name") else None
 
 
 async def lookup_place_with_photo(name: str, city: str) -> Optional[dict]:
