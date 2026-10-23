@@ -259,6 +259,7 @@ async def create_invitation_code(
                 friend_name=recipient_name or "there",
                 inviter_name=referrer_full_name,
                 invitation_url=link,
+                invite_code=code,
             )
             subject = f"{referrer_first_name} has invited you to TripAgent"
         else:
@@ -400,16 +401,14 @@ def redeem_invite(code: str, details: Optional[dict] = None) -> dict:
     until = now + timedelta(days=_GRANT_DAYS)
     until_iso = until.isoformat()
 
-    # A code belongs to the email the advisor approved. Whoever claims it must
-    # give that email, so a code passed to a friend cannot be claimed with
-    # their own email (or without one) and log them in as the applicant.
+    # A code belongs to the email the advisor approved, and the member is always
+    # created with that email. The claim page asks for the code alone
+    # (2026-10-23, direct request), so no email is required; one that IS given
+    # (an older caller) must still be the approved one.
     expected_email = (pulled.get("email") or row.get("recipient_email") or "").strip().lower() or None
     given_email = (details.get("email") or "").strip().lower()
-    if expected_email:
-        if not given_email:
-            return {"valid": False, "error": "email_required"}
-        if given_email != expected_email:
-            return {"valid": False, "error": "wrong_email"}
+    if expected_email and given_email and given_email != expected_email:
+        return {"valid": False, "error": "wrong_email"}
 
     email = (expected_email or given_email or "").strip().lower() or None
 
@@ -750,6 +749,7 @@ def _referral_invitation_email_html(
     friend_name: str,
     inviter_name: str,
     invitation_url: str,
+    invite_code: str = "",
 ) -> str:
     """New Chic Stays-style referral invitation email (2026-09-27) — hero
     image, service icons, invitation box layout. Reads the template from
@@ -772,6 +772,7 @@ def _referral_invitation_email_html(
     html = html.replace("{{FRIEND_NAME}}", html_lib.escape(friend_name))
     html = html.replace("{{INVITER_NAME}}", html_lib.escape(inviter_name))
     html = html.replace("{{INVITATION_URL}}", invitation_url)
+    html = html.replace("{{INVITE_CODE}}", html_lib.escape(invite_code))
     html = html.replace("{{TRIPAGENT_URL}}", tripagent_url)
     html = html.replace("{{UNSUBSCRIBE_URL}}", unsubscribe_url)
     return html

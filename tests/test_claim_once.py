@@ -1,4 +1,4 @@
-"""A code is claimed once, by the email it was issued to; a claimed code never signs anyone in."""
+"""A code is claimed once, as the email it was issued to; a claimed code never signs anyone in."""
 from app.services import invite_service
 
 
@@ -59,8 +59,12 @@ def test_other_email_cannot_claim(monkeypatch):
     assert client.updates == []  # the code stays unused
 
 
-def test_email_is_required(monkeypatch):
-    assert _redeem(monkeypatch, _Client(_row()), None) == {"valid": False, "error": "email_required"}
+def test_code_alone_claims_as_the_approved_email(monkeypatch):
+    # No email is asked for; the member is created with the email the code was issued to.
+    seen = {}
+    monkeypatch.setattr(invite_service, "_finish_redeem", lambda client, code, member, email, now: seen.update(email=email) or {"valid": True})
+    assert _redeem(monkeypatch, _Client(_row()), None) == {"valid": True}
+    assert seen["email"] == "asha@example.com"
 
 
 def test_second_claim_at_the_same_moment_loses(monkeypatch):
