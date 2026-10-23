@@ -1,3 +1,4 @@
+import os
 import time
 from collections import defaultdict, deque
 from threading import Lock
@@ -20,6 +21,30 @@ def _client_ip(request: Request) -> str:
     return request.client.host if request.client else "unknown"
 
 
+# Test mailboxes that are never rate limited (2026-10-23, direct request): so the
+# sign-up and sign-in screens can be tried over and over. Comma-separated
+# RATE_LIMIT_EXEMPT_EMAILS replaces the list; anyone else is limited as usual.
+_EXEMPT_EMAILS = {
+    e.strip().lower()
+    for e in os.environ.get("RATE_LIMIT_EXEMPT_EMAILS", "bhanumathi.s@tripsure.com").split(",")
+    if e.strip()
+}
+
+
+def is_exempt_email(email) -> bool:
+    return str(email or "").strip().lower() in _EXEMPT_EMAILS
+
+
+async def _body_email(request: Request) -> str:
+    """The email in a JSON request body, "" when there is none. The body stays
+    readable for the endpoint afterwards."""
+    try:
+        data = await request.json()
+    except Exception:  # noqa: BLE001 — no body, or not JSON: no email to exempt
+        return ""
+    return str(data.get("email") or "") if isinstance(data, dict) else ""
+
+
 def _check(key: str, window_seconds: int, max_requests: int) -> None:
     now = time.monotonic()
     with _lock:
@@ -31,7 +56,7 @@ def _check(key: str, window_seconds: int, max_requests: int) -> None:
         hits.append(now)
 
 
-def rate_limit_otp_request(request: Request) -> None:
+async def rate_limit_otp_request(request: Request) -> None:
     """Throttles POST /auth/request-otp per client IP — 5 requests per 5
     minutes. On top of, not instead of, Supabase's own project-level OTP
     email-send throttling. In-memory, per-process: correct for today's
@@ -39,20 +64,26 @@ def rate_limit_otp_request(request: Request) -> None:
     load balancer, the effective limit becomes N x this per real attacker —
     move to a shared store (Redis) at that point, not a correctness bug
     today, just a reduced bound."""
+    if is_exempt_email(await _body_email(request)):
+        return
     _check(f"otp-request:{_client_ip(request)}", window_seconds=300, max_requests=5)
 
 
-def rate_limit_otp_verify(request: Request) -> None:
+async def rate_limit_otp_verify(request: Request) -> None:
     """Throttles POST /auth/verify-otp per client IP — 10 attempts per 5
     minutes. Looser than request-otp (real users mistype codes), but still
     makes brute-forcing a 6-digit code (1,000,000 possibilities) wildly
     impractical well before Supabase's own short OTP expiry even matters."""
+    if is_exempt_email(await _body_email(request)):
+        return
     _check(f"otp-verify:{_client_ip(request)}", window_seconds=300, max_requests=10)
 
-def rate_limit_access_request(request: Request) -> None:
+async def rate_limit_access_request(request: Request) -> None:
     """Throttles the public Request Access form per client IP — 5
     submissions per 10 minutes. Same in-memory, per-process caveat as the
     OTP limits above."""
+    if is_exempt_email(await _body_email(request)):
+        return
     _check(f"access-request:{_client_ip(request)}", window_seconds=600, max_requests=5)
 
 
@@ -68,6 +99,8 @@ def rate_limit_invite_redeem(request: Request) -> None:
 # connections. Same in-memory, per-process caveat as the limits above. Raises
 # 429 like _check().
 def limit_contact(kind: str, value: str, window_seconds: int, max_requests: int) -> None:
+    if is_exempt_email(value):
+        return
     key = "".join(ch for ch in (value or "").strip().lower() if not ch.isspace())
     if key:
         _check(f"{kind}:{key}", window_seconds=window_seconds, max_requests=max_requests)

@@ -113,8 +113,10 @@ def create_access_request(payload: dict) -> dict:
     # day is the request already made, so no second row and no second
     # "request received" email (a double submit used to send two).
     from app.dependencies.rate_limit import limit_contact
+    from app.dependencies.rate_limit import is_exempt_email
     limit_contact("access-request-email", email, 3600, 3)
-    limit_contact("access-request-phone", phone, 3600, 3)
+    if not is_exempt_email(email):  # a test mailbox is not limited by its phone number either
+        limit_contact("access-request-phone", phone, 3600, 3)
 
     client = _require_client()
     now = datetime.now(timezone.utc)
