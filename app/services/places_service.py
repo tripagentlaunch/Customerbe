@@ -161,7 +161,7 @@ async def _search_text(query: str, field_mask: str, max_results: int, place_type
     return response.json()
 
 
-async def lookup_place(name: str, city: str) -> Optional[dict]:
+async def lookup_place(name: str, city: str, allow_stock: bool = True) -> Optional[dict]:
     """Returns {"place_name", "lat", "lon", "photo_ref", "attribution"}
     for the best Text Search match of "<name>, <city>", or None if unset
     API key, empty name, the search errors, or no place/photo is found.
@@ -174,7 +174,7 @@ async def lookup_place(name: str, city: str) -> Optional[dict]:
 
     city = (city or "").strip()
     query = f"{name}, {city}" if city else name
-    cache_key = (name, city)
+    cache_key = (name, city, allow_stock)
 
     now = time.time()
     cached = _CACHE.get(cache_key)
@@ -183,22 +183,15 @@ async def lookup_place(name: str, city: str) -> Optional[dict]:
     if cached is not None:
         del _CACHE[cache_key]  # expired — evict rather than let the dict grow unbounded
 
-    try:
-        data = await _search_text(query, _FIELD_MASK, max_results=1)
-    except (httpx.HTTPError, ValueError) as exc:
-        body = getattr(getattr(exc, "response", None), "text", "")
-        print(f"[PLACES] searchText failed for {query!r}: {type(exc).__name__}: {exc} | body={body}")
-        # Not cached — a transient failure should be retried on the next
-        # request, not remembered as "not found" even for a few minutes.
-        return None
+    # Pexels runs alongside Google (2026-10-23, direct request): it is the slow
+    # call, so it starts now and is only awaited if Google has no usable photo.
+    # allow_stock=False (hotels): never Pexels, so no call at all.
+    pexels_task = asyncio.create_task(pexels_service.get_hotel_specific_photo(name, city)) if allow_stock else None
 
     async def _fallback():
-        # Pexels city-photo fallback (2026-09-30, direct request: guide-
-        # panel items whose Google Places search finds no real match were
-        # showing a blank placeholder). Honest generic photo of the CITY,
-        # never claimed to be this specific venue — a real photo beats an
-        # empty placeholder, but never a fabricated match.
-        pexels = await pexels_service.get_city_stock_photo(city or name)
+        # Only a photo Pexels itself describes as THIS place (relevance-checked);
+        # never a generic city photo: no image is better than a wrong one.
+        pexels = await pexels_task if pexels_task else None
         if not pexels:
             return None
         return {
@@ -210,6 +203,15 @@ async def lookup_place(name: str, city: str) -> Optional[dict]:
             "attribution": pexels.get("photographer"),
             "source": "pexels",
         }
+
+    try:
+        data = await _search_text(query, _FIELD_MASK, max_results=1)
+    except (httpx.HTTPError, ValueError) as exc:
+        body = getattr(getattr(exc, "response", None), "text", "")
+        print(f"[PLACES] searchText failed for {query!r}: {type(exc).__name__}: {exc} | body={body}")
+        # Not cached — a transient failure should be retried on the next
+        # request, not remembered as "not found" even for a few minutes.
+        return await _fallback()
 
     places = data.get("places") or []
     if not places:
@@ -240,6 +242,8 @@ async def lookup_place(name: str, city: str) -> Optional[dict]:
         _CACHE[cache_key] = (now + _CACHE_TTL_SECONDS, result)
         return result
 
+    if pexels_task:
+        pexels_task.cancel()  # Google has the photo: the Pexels call is not needed
     author_attributions = photos[0].get("authorAttributions") or []
     attribution = author_attributions[0].get("displayName") if author_attributions else None
 
@@ -339,6 +343,8 @@ async def lookup_place_with_photo(name: str, city: str) -> Optional[dict]:
     result = await lookup_place(name, city)
     if result is None:
         return None
+    if not result.get("photo_ref"):
+        return {**result, "photo_data_url": result.get("photo_url")}  # Pexels result: already a public URL
     fetched = await fetch_photo_bytes(result["photo_ref"])
     if fetched is None:
         return {**result, "photo_data_url": None}
