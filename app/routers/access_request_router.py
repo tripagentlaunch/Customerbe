@@ -19,6 +19,8 @@ _VALIDATION_STATUS = {
     "bad_name": 400,
     "bad_phone": 400,
     "bad_field": 400,
+    "already_approved": 409,
+    "denied_recently": 429,
 }
 
 
@@ -36,6 +38,8 @@ async def create_access_request(background: BackgroundTasks, payload: dict = Bod
 
     if not result.get("ok"):
         error = result.get("error", "invalid")
+        if error == "denied_recently":
+            raise HTTPException(status_code=429, detail={"error": error, "retry_at": result.get("retry_at")})
         raise HTTPException(status_code=_VALIDATION_STATUS.get(error, 400), detail=error)
 
     # Confirmation to the applicant, after the response (never fails the request).

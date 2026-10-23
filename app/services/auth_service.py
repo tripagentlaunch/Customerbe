@@ -7,6 +7,7 @@ still not a member. Same site_members.auth_uid lookup referral_service.py
 already uses for the same "is this a member" question."""
 
 import logging
+from datetime import datetime, timezone
 from typing import Optional
 
 from supabase_auth.errors import AuthApiError
@@ -35,6 +36,21 @@ def _require_session_client():
 def _lookup_site_member(client, auth_uid: str) -> Optional[dict]:
     rows = client.table("site_members").select("*").eq("auth_uid", auth_uid).limit(1).execute().data
     return rows[0] if rows else None
+
+
+def membership_ended(member: dict) -> bool:
+    """True once the member's 3-month access (site_members.member_until, set when
+    their code was claimed) is over. No date on the row = no end date."""
+    raw = (member or {}).get("member_until")
+    if not raw:
+        return False
+    try:
+        until = datetime.fromisoformat(str(raw).replace("Z", "+00:00"))
+    except ValueError:
+        return False
+    if until.tzinfo is None:
+        until = until.replace(tzinfo=timezone.utc)
+    return until <= datetime.now(timezone.utc)
 
 
 def request_otp(email: str) -> dict:
@@ -76,6 +92,13 @@ def verify_otp(email: str, token: str) -> dict:
         except Exception:  # noqa: BLE001 - best-effort revoke, never blocks the not_invited response
             pass
         return {"ok": False, "error": "not_invited"}
+
+    if membership_ended(member):
+        try:
+            client.auth.admin.sign_out(resp.session.access_token, "global")
+        except Exception:  # noqa: BLE001 - best-effort revoke
+            pass
+        return {"ok": False, "error": "membership_expired"}
 
     return {
         "ok": True,
@@ -122,6 +145,8 @@ def fetch_session_member(access_token: Optional[str], refresh_token: Optional[st
         user_resp = refreshed
 
     member = _lookup_site_member(client, user_resp.user.id)
+    if member is not None and membership_ended(member):
+        return {"signed_in": False, "member": None, "refreshed_tokens": None, "expired": True}
     return {"signed_in": member is not None, "member": member, "refreshed_tokens": refreshed_tokens}
 
 

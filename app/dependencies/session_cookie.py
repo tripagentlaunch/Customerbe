@@ -16,10 +16,10 @@ REFRESH_TOKEN_COOKIE = "ta_refresh_token"
 
 # When this login began (unix seconds). A login lasts SESSION_SECONDS from
 # then — a fixed limit (2026-10-09, direct request), not renewed by each
-# visit's token refresh; after it the member enters their code again. The
+# visit's token refresh; after it the member signs in again (email code). The
 # access-token cookie's max_age still follows Supabase's own expires_in.
 LOGIN_AT_COOKIE = "ta_login_at"
-SESSION_SECONDS = 60 * 60 * 24 * 30
+SESSION_SECONDS = 60 * 60 * 24 * 90  # 3 months (was 30 days)
 
 
 def _cookie_kwargs() -> dict:
@@ -46,7 +46,7 @@ def set_session_cookies(
     response: Response, access_token: str, refresh_token: str, expires_in: int, login_at: float | None = None
 ) -> None:
     """login_at None = a new login (code entered / OTP verified); a refresh
-    passes the original time so the 30 days never extend."""
+    passes the original time so the 90 days never extend."""
     kwargs = _cookie_kwargs()
     started = login_at if login_at is not None else time.time()
     remaining = session_remaining(started)

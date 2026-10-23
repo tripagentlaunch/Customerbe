@@ -46,4 +46,5 @@ class VerifyOtpResponse(BaseModel):
 
 class SessionResponse(BaseModel):
     signed_in: bool
+    expired: bool = False  # signed in before, but the 3-month membership has ended
     member: Optional[SiteMember] = None
