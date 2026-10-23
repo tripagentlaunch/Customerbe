@@ -15,8 +15,8 @@ bucket represents "the current image for this hotel," not source history.
 
 Flow, mirroring hotel_router.get_hotel_public's existing priority order:
   1. Bucket has {hotel_key}.*  -> return its public URL, no external call.
-  2. Else: try Pexels (get_hotel_specific_photo) same as today, else fall
-     back to the real TripSure image passed in by the caller.
+  2. Else: the real TripSure image passed in by the caller, else Google
+     Places (never Pexels, 2026-10-23).
   3. On a source hit, download the bytes, upload to the bucket, return the
      new bucket public URL (source label unchanged: "pexels"/"tripsure").
   4. Nothing found anywhere -> None, same as today's blank placeholder.
@@ -30,10 +30,12 @@ never a hard dependency of get_hotel_public.
 import logging
 from typing import Optional, Optional
 
+from urllib.parse import quote
+
 import httpx
 
 from app.dependencies.supabase_client import get_supabase_admin_client
-from app.services import pexels_service
+from app.services import places_service
 
 _log = logging.getLogger("hotel_proxy")
 
@@ -100,7 +102,7 @@ async def get_or_cache_hotel_image(
     city: Optional[str],
     tripsure_image_url: Optional[str],
 ) -> Optional[dict]:
-    """Returns {"url", "source": "cache" | "pexels" | "tripsure", "photographer"}
+    """Returns {"url", "source": "cache" | "tripsure" | "google_places", "photographer"}
     or None (mirrors get_hotel_public's existing None == blank placeholder).
     "source" is what get_hotel_public should put in imageSource, except
     "cache" — a cache hit doesn't reveal which original source it was, so
@@ -118,6 +120,9 @@ async def get_or_cache_hotel_image(
     if live is None:
         return None
 
+    if live.get("cacheable") is False:
+        return live  # Google photo: served live through the proxy, never stored
+
     downloaded = await _download(live["url"])
     if downloaded is None:
         return live  # couldn't cache it, still serve the live URL
@@ -131,11 +136,19 @@ async def get_or_cache_hotel_image(
 
 
 async def _fetch_live(hotel_name: Optional[str], city: Optional[str], tripsure_image_url: Optional[str]) -> Optional[dict]:
-    """Same priority as hotel_router.get_hotel_public today: Pexels (if
-    genuinely relevant) first, else the real TripSure image."""
-    stock = await pexels_service.get_hotel_specific_photo(hotel_name, city)
-    if stock:
-        return {"url": stock["url"], "source": "pexels", "photographer": stock.get("photographer")}
+    """Hotel photo order (2026-10-23, direct request): the real TripSure image,
+    then Google Places. Never Pexels: a stock photo of some other property is
+    worse than no photo. Google's photo is served through our /api/places/photo
+    proxy and never downloaded into the bucket (Google's terms forbid keeping it),
+    so a "google_places" result has "cacheable": False."""
     if tripsure_image_url:
         return {"url": tripsure_image_url, "source": "tripsure", "photographer": None}
+    found = await places_service.lookup_place(hotel_name or "", city or "", allow_stock=False)
+    if found and found.get("photo_ref"):
+        return {
+            "url": f"/api/places/photo?ref={quote(found['photo_ref'], safe='')}",
+            "source": "google_places",
+            "photographer": found.get("attribution"),
+            "cacheable": False,
+        }
     return None
