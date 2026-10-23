@@ -115,7 +115,39 @@ def create_access_request(payload: dict) -> dict:
     limit_contact("access-request-phone", phone, 3600, 3)
 
     client = _require_client()
-    since = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()
+    now = datetime.now(timezone.utc)
+    since = (now - timedelta(hours=24)).isoformat()
+
+    # Already approved: the same email AND phone as an approved request or an
+    # existing member. Both must match, so typing someone else's email alone
+    # tells a stranger nothing. They are sent to sign in instead.
+    try:
+        approved = (client.table("site_access_requests").select("id").eq("status", "approved")
+                    .eq("email", email).eq("phone", phone).limit(1).execute().data)
+        member = (client.table("site_members").select("id").eq("email", email).eq("phone", phone).limit(1).execute().data
+                  if not approved else [])
+    except APIError as exc:
+        _log.warning("[ACCESS_REQUEST] approved check failed: %s", exc)
+        approved, member = [], []
+    if approved or member:
+        return {"ok": False, "error": "already_approved"}
+
+    # Denied in the last 24 hours (same email OR phone): not before that day is up.
+    try:
+        denied = (client.table("site_access_requests").select("reviewed_at").eq("status", "denied").gte("reviewed_at", since)
+                  .or_(f"email.eq.{email},phone.eq.{phone}").order("reviewed_at", desc=True).limit(1).execute().data)
+    except APIError as exc:
+        _log.warning("[ACCESS_REQUEST] denied check failed: %s", exc)
+        denied = []
+    if denied and denied[0].get("reviewed_at"):
+        try:
+            reviewed = datetime.fromisoformat(str(denied[0]["reviewed_at"]).replace("Z", "+00:00"))
+            if reviewed.tzinfo is None:
+                reviewed = reviewed.replace(tzinfo=timezone.utc)
+            return {"ok": False, "error": "denied_recently", "retry_at": (reviewed + timedelta(hours=24)).isoformat()}
+        except ValueError:
+            return {"ok": False, "error": "denied_recently", "retry_at": (now + timedelta(hours=24)).isoformat()}
+
     try:
         repeat = (client.table("site_access_requests").select("id").eq("status", "pending").gte("created_at", since)
                   .or_(f"email.eq.{email},phone.eq.{phone}").order("created_at", desc=True).limit(1).execute().data)

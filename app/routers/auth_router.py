@@ -62,8 +62,8 @@ async def get_session(request: Request, response: Response):
     refresh_token = request.cookies.get(REFRESH_TOKEN_COOKIE)
     if not access_token and not refresh_token:
         return SessionResponse(signed_in=False, member=None)
-    # 30-day limit from when this login began. Sessions from before this
-    # cookie existed start their 30 days now rather than being cut off.
+    # 90-day limit from when this login began. Sessions from before this
+    # cookie existed start their 90 days now rather than being cut off.
     login_at = login_started(request.cookies.get(LOGIN_AT_COOKIE)) or time.time()
     if session_remaining(login_at) <= 0:
         clear_session_cookies(response)
@@ -83,7 +83,7 @@ async def get_session(request: Request, response: Response):
     if not result["signed_in"]:
         clear_session_cookies(response)
 
-    return SessionResponse(signed_in=result["signed_in"], member=result["member"])
+    return SessionResponse(signed_in=result["signed_in"], member=result["member"], expired=bool(result.get("expired")))
 
 
 @router.post("/logout", dependencies=[Depends(require_csrf_header)])

@@ -35,7 +35,7 @@ _log = logging.getLogger("hotel_proxy")
 # decided once at process start, same timing this constant always had.
 _INVITE_BASE_URL = f"{settings.site_base_url}/claim"
 _POSTGRES_UNIQUE_VIOLATION = "23505"
-_GRANT_DAYS = 365
+_GRANT_DAYS = 90  # 3 months from the claim (was 365)
 _INVITE_EXPIRY_DAYS = 14
 _EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 _E164_RE = re.compile(r"^\+[1-9]\d{6,14}$")
@@ -385,22 +385,14 @@ def redeem_invite(code: str, details: Optional[dict] = None) -> dict:
     if not rows:
         return {"valid": False, "error": "not_found"}
     row = rows[0]
-    if row["status"] == "redeemed":
-        # 2026-10-09 (direct request): a claimed code is its member's login,
-        # not a dead ticket — entering it again signs that member back in.
-        # Its invitation expiry no longer applies once claimed.
-        signed_in = _sign_in_with_claimed_code(client, row)
-        if signed_in is not None:
-            return signed_in
-        # 2026-10-21: the member who claimed it isn't in this project (codes
-        # copied from dev into prod point at dev members): claim it afresh
-        # rather than answer "already redeemed" for a code nobody here holds.
-    elif row["status"] != "unused":
+    if row["status"] != "unused":
+        # A claimed code is claimed for good: it never signs anyone in again.
+        # Its member signs in with their email (/auth/request-otp).
         return {"valid": False, "used": True}
     # expires_at (now+14d, set by create_invitation_code()) is what the
     # invitation email promises — enforce it here, not just display it.
     # Older rows with no expires_at stay redeemable, as before.
-    if row["status"] == "unused" and row.get("expires_at") and datetime.fromisoformat(row["expires_at"]) <= datetime.now(timezone.utc):
+    if row.get("expires_at") and datetime.fromisoformat(row["expires_at"]) <= datetime.now(timezone.utc):
         return {"valid": False, "error": "expired"}
 
     pulled =_pull_access_request_details(client, row["access_request_id"]) if row.get("access_request_id") else {}
@@ -409,7 +401,18 @@ def redeem_invite(code: str, details: Optional[dict] = None) -> dict:
     until = now + timedelta(days=_GRANT_DAYS)
     until_iso = until.isoformat()
 
-    email = (details.get("email") or pulled.get("email") or row.get("recipient_email") or "").strip().lower() or None
+    # A code belongs to the email the advisor approved. Whoever claims it must
+    # give that email, so a code passed to a friend cannot be claimed with
+    # their own email (or without one) and log them in as the applicant.
+    expected_email = (pulled.get("email") or row.get("recipient_email") or "").strip().lower() or None
+    given_email = (details.get("email") or "").strip().lower()
+    if expected_email:
+        if not given_email:
+            return {"valid": False, "error": "email_required"}
+        if given_email != expected_email:
+            return {"valid": False, "error": "wrong_email"}
+
+    email = (expected_email or given_email or "").strip().lower() or None
 
     member = {
         # label: the invite's name, set by every issuance path (the admin
@@ -427,6 +430,34 @@ def redeem_invite(code: str, details: Optional[dict] = None) -> dict:
         "invited_by": row.get("referred_by_member_id"),
     }
 
+    # One claim per code, decided by the database: this update matches only while
+    # the code is still unused, so two screens claiming at once cannot both win.
+    # Any failure below puts the code back (_release_claim).
+    claimed = client.table("site_invitation_codes").update(
+        {"status": "redeemed", "redeemed_at": now.isoformat()}
+    ).eq("code", code).eq("status", "unused").execute().data
+    if not claimed:
+        return {"valid": False, "used": True}
+
+    try:
+        return _finish_redeem(client, code, member, email, now)
+    except Exception:
+        _release_claim(client, code)
+        raise
+
+
+def _release_claim(client, code: str) -> None:
+    """Undo a claim whose member could not be created, so the code can be tried again."""
+    try:
+        client.table("site_invitation_codes").update(
+            {"status": "unused", "redeemed_at": None}
+        ).eq("code", code).eq("status", "redeemed").is_("redeemed_by", "null").execute()
+    except Exception:  # noqa: BLE001 — the original failure is the one to surface
+        _log.exception("could not release the claim on %s", code)
+
+
+def _finish_redeem(client, code: str, member: dict, email: Optional[str], now: datetime) -> dict:
+    """Everything after the claim: the Auth identity, the site_members row, the session."""
     # Only an email-bearing redemption can get a real Supabase Auth
     # identity (auth requires *something* to sign in with, and this app's
     # only sign-in path is email OTP — see auth.tsx). Codes with no email
@@ -470,6 +501,7 @@ def redeem_invite(code: str, details: Optional[dict] = None) -> dict:
                 # couldn't find it (SDK limitation, race, or worse) — never
                 # silently proceed with no auth_uid; surface the same
                 # error the caller already handles rather than guess.
+                _release_claim(client, code)
                 return {"valid": False, "error": "auth_account_exists"}
             auth_user_id = existing.id
         member["auth_uid"] = auth_user_id
@@ -531,7 +563,7 @@ def redeem_invite(code: str, details: Optional[dict] = None) -> dict:
         member_id = inserted[0]["id"] if inserted else None
 
     client.table("site_invitation_codes").update(
-        {"status": "redeemed", "redeemed_by": member_id, "redeemed_at": now.isoformat()}
+        {"redeemed_by": member_id}
     ).eq("code", code).execute()
 
     if auth_user_id:
@@ -563,37 +595,6 @@ def redeem_invite(code: str, details: Optional[dict] = None) -> dict:
         # same values the client already sees reflected in its own request.
         "email": email,
         "name": member["name"],
-    }
-
-
-def _sign_in_with_claimed_code(client, row: dict) -> Optional[dict]:
-    """Session for the member who claimed this code; the old 'already claimed'
-    answer when that member is inactive or can't be signed in; None when no
-    such member exists in this project (the caller then claims the code anew)."""
-    member_id = row.get("redeemed_by")
-    members = (
-        client.table("site_members").select("id,name,email,status").eq("id", member_id).limit(1).execute().data
-        if member_id else []
-    )
-    member = members[0] if members else None
-    if not member:
-        return None
-    email = (member.get("email") or "").strip().lower()
-    if member.get("status") not in (None, "active") or not email:
-        return {"valid": False, "used": True}
-    link = _retry_on_connect_error(lambda: client.auth.admin.generate_link({"type": "magiclink", "email": email}))
-    session = _issue_session_for_new_auth_user(email, link.properties.hashed_token)
-    if not session:
-        return {"valid": False, "used": True}
-    return {
-        "valid": True,
-        "returning": True,
-        "months": max(1, min(24, round(_GRANT_DAYS / 30))),
-        "memberId": member["id"],
-        "advisorName": None,
-        "session": session,
-        "email": email,
-        "name": member.get("name"),
     }
 
 
