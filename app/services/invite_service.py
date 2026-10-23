@@ -401,16 +401,14 @@ def redeem_invite(code: str, details: Optional[dict] = None) -> dict:
     until = now + timedelta(days=_GRANT_DAYS)
     until_iso = until.isoformat()
 
-    # A code belongs to the email the advisor approved. Whoever claims it must
-    # give that email, so a code passed to a friend cannot be claimed with
-    # their own email (or without one) and log them in as the applicant.
+    # A code belongs to the email the advisor approved, and the member is always
+    # created with that email. The claim page asks for the code alone
+    # (2026-10-23, direct request), so no email is required; one that IS given
+    # (an older caller) must still be the approved one.
     expected_email = (pulled.get("email") or row.get("recipient_email") or "").strip().lower() or None
     given_email = (details.get("email") or "").strip().lower()
-    if expected_email:
-        if not given_email:
-            return {"valid": False, "error": "email_required"}
-        if given_email != expected_email:
-            return {"valid": False, "error": "wrong_email"}
+    if expected_email and given_email and given_email != expected_email:
+        return {"valid": False, "error": "wrong_email"}
 
     email = (expected_email or given_email or "").strip().lower() or None
 
