@@ -17,6 +17,8 @@ _NAME_RE = re.compile(r"^[^\W\d_](?:[^\W\d_]|[ .'\-])*$")
 # Indian mobile: 10 digits starting 6-9, optionally written with 91 / +91 / 0.
 _IN_MOBILE_RE = re.compile(r"^(?:\+?91|0)?([6-9]\d{9})$")
 _CONTROL_RE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f\u200b-\u200f\u2028\u2029\ufeff]")
+# The admin console writes "declined"; this service's own deny() writes "denied".
+_DECLINED = ("declined", "denied")
 _MAX = {"first_name": 50, "last_name": 50, "email": 254, "reason": 500, "city": 100, "travel_date": 100, "destination": 100}
 
 
@@ -134,7 +136,7 @@ def create_access_request(payload: dict) -> dict:
 
     # Denied in the last 24 hours (same email OR phone): not before that day is up.
     try:
-        denied = (client.table("site_access_requests").select("reviewed_at").eq("status", "denied").gte("reviewed_at", since)
+        denied = (client.table("site_access_requests").select("reviewed_at").in_("status", list(_DECLINED)).gte("reviewed_at", since)
                   .or_(f"email.eq.{email},phone.eq.{phone}").order("reviewed_at", desc=True).limit(1).execute().data)
     except APIError as exc:
         _log.warning("[ACCESS_REQUEST] denied check failed: %s", exc)

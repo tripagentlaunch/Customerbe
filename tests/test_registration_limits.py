@@ -11,6 +11,7 @@ class _Q:
     def select(self, *_): return self
     def insert(self, row): self.op, self.payload = "insert", row; return self
     def eq(self, c, v): self.rows = [r for r in self.rows if r.get(c) == v]; return self
+    def in_(self, c, vs): self.rows = [r for r in self.rows if r.get(c) in vs]; return self
     def gte(self, c, v): self.rows = [r for r in self.rows if str(r.get(c) or "") >= v]; return self
     def ilike(self, c, v): self.rows = [r for r in self.rows if str(r.get(c) or "").lower() == v.lower()]; return self
     def or_(self, expr):
