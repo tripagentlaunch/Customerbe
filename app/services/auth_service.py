@@ -16,6 +16,9 @@ from app.dependencies.supabase_client import get_session_auth_client, get_supaba
 
 _log = logging.getLogger("auth_service")
 
+# Supabase's own codes for "too many sign-in emails" (AuthApiError.code).
+_RATE_LIMIT_CODES = {"over_email_send_rate_limit", "over_request_rate_limit", "over_sms_send_rate_limit"}
+
 
 def _require_client():
     client = get_supabase_admin_client()
@@ -60,9 +63,19 @@ def request_otp(email: str) -> dict:
     except AuthApiError as exc:
         # Same substring match auth.tsx's requestLogin() used to do
         # client-side for Supabase's "not on the invitation list" copy.
-        if "not_invited" in str(exc).lower() or "not on the invitation" in str(exc).lower():
+        message = str(exc).lower()
+        if "not_invited" in message or "not on the invitation" in message:
             return {"ok": False, "error": "not_invited"}
-        return {"ok": False, "error": str(exc)}
+        # Every other refusal used to reach the browser as Supabase's raw text and
+        # was never logged, so "We couldn't send the code" had no visible cause.
+        code = str(getattr(exc, "code", "") or "")
+        status = getattr(exc, "status", None)
+        _log.warning("[auth] request_otp refused by Supabase: status=%s code=%s message=%s", status, code, exc)
+        # Supabase caps the emails it sends (per project, and one per address
+        # every ~60s): "over_email_send_rate_limit" / "email rate limit exceeded".
+        if status == 429 or code in _RATE_LIMIT_CODES or "rate limit" in message or "you can only request this after" in message:
+            return {"ok": False, "error": "rate_limited"}
+        return {"ok": False, "error": "send_failed"}
     except Exception as exc:  # noqa: BLE001 - network/TLS failure talking to Supabase auth
         _log.error("[auth] request_otp failed: %s", exc)
         raise RuntimeError(f"request_otp failed: {exc}") from exc
