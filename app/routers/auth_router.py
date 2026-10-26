@@ -38,6 +38,9 @@ async def request_otp(payload: RequestOtpRequest):
     except RuntimeError as exc:
         _log.error("[auth] request-otp failed: %s", exc)
         raise HTTPException(status_code=503, detail="auth service unavailable")
+    if not result["ok"] and result.get("error") in ("rate_limited", "send_failed"):
+        # Supabase would not send the email: mint the code here and send it ourselves.
+        result = await auth_service.send_code_ourselves(payload.email, result["error"])
     return RequestOtpResponse(**result)
 
 
