@@ -61,3 +61,8 @@ def rate_limit_invite_redeem(request: Request) -> None:
     now stay valid as a member's login (2026-10-09), so they need the same
     guessing protection as the OTP endpoints."""
     _check(f"invite-redeem:{_client_ip(request)}", window_seconds=600, max_requests=10)
+
+
+def rate_limit_super_key_location(request: Request) -> None:
+    """The location report that follows a super key entry: 20 per 10 minutes per client IP."""
+    _check(f"super-key-location:{_client_ip(request)}", window_seconds=600, max_requests=20)

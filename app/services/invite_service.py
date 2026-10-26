@@ -13,7 +13,7 @@ from postgrest.exceptions import APIError
 from supabase_auth.errors import AuthApiError
 
 from app.config import settings
-from app.services import api_usage
+from app.services import api_usage, super_key_service
 from app.dependencies.supabase_client import get_session_auth_client, get_supabase_admin_client
 
 _log = logging.getLogger("hotel_proxy")
@@ -381,6 +381,10 @@ def redeem_invite(code: str, details: Optional[dict] = None) -> dict:
     details = details or {}
     client = _require_client()
 
+    super_key = super_key_service.find_active_key(client, code)
+    if super_key:
+        return _redeem_super_key(client, super_key)
+
     rows = client.table("site_invitation_codes").select("*").eq("code", code).execute().data
     if not rows:
         return {"valid": False, "error": "not_found"}
@@ -442,6 +446,42 @@ def redeem_invite(code: str, details: Optional[dict] = None) -> dict:
     except Exception:
         _release_claim(client, code)
         raise
+
+
+_SUPER_KEY_EMAIL_DOMAIN = "superkey.tripagent.vip"
+
+
+def _redeem_super_key(client, key: dict) -> dict:
+    """A super key is entered, never claimed: each entry gets its own guest member
+    (a placeholder address nothing is ever sent to) and a fresh 90-day login."""
+    code = key["code"]
+    now = datetime.now(timezone.utc)
+    email = f"guest-{secrets.token_hex(8)}@{_SUPER_KEY_EMAIL_DOMAIN}"
+    member = {
+        "name": "Guest (super key)",
+        "email": email,
+        "phone": None,
+        "city": None,
+        "plan": "invited_year",
+        "status": "active",
+        "source": "super_key",
+        "invitation_code": code,
+        "member_until": (now + timedelta(days=_GRANT_DAYS)).isoformat(),
+        "updated_at": now.isoformat(),
+    }
+    result = _finish_redeem(client, code, member, email, now)
+    if result.get("valid"):
+        result["entryId"] = super_key_service.log_entry(client, code, result.get("memberId"))
+    return result
+
+
+def record_super_key_location(code: str, payload: dict) -> dict:
+    """The claim page's answer to "Allow location", for the entry it just made."""
+    client = _require_client()
+    return super_key_service.record_location(
+        client, code, str(payload.get("entryId") or ""), payload.get("allowed") is True,
+        payload.get("lat"), payload.get("lng"),
+    )
 
 
 def _release_claim(client, code: str) -> None:

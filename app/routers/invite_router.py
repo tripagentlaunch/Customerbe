@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Body, Depends, HTTPException, Response
 
-from app.dependencies.rate_limit import rate_limit_invite_redeem
+from app.dependencies.rate_limit import rate_limit_invite_redeem, rate_limit_super_key_location
 from app.dependencies.session_cookie import set_session_cookies
 from app.services import invite_service
 
@@ -48,3 +48,12 @@ async def invite_capture(code: str, response: Response, payload: dict = Body(def
     except RuntimeError as exc:
         raise HTTPException(status_code=500, detail=str(exc))
     return _consume_session(result, response)
+
+
+@router.post("/{code}/location", dependencies=[Depends(rate_limit_super_key_location)])
+async def invite_location(code: str, payload: dict = Body(default={})):
+    """Super key only: where the visitor says they are, after "Allow location"."""
+    try:
+        return invite_service.record_super_key_location(code.strip().upper(), payload)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
