@@ -94,6 +94,11 @@ def rate_limit_invite_redeem(request: Request) -> None:
     _check(f"invite-redeem:{_client_ip(request)}", window_seconds=600, max_requests=10)
 
 
+def rate_limit_super_key_location(request: Request) -> None:
+    """The location report that follows a super key entry: 20 per 10 minutes per client IP."""
+    _check(f"super-key-location:{_client_ip(request)}", window_seconds=600, max_requests=20)
+
+
 # Per person, not only per network (2026-10-22): the same email or phone can't
 # register, ask for sign-in codes or be invited over and over from different
 # connections. Same in-memory, per-process caveat as the limits above. Raises
