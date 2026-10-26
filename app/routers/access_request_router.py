@@ -42,8 +42,10 @@ async def create_access_request(background: BackgroundTasks, payload: dict = Bod
             raise HTTPException(status_code=429, detail={"error": error, "retry_at": result.get("retry_at")})
         raise HTTPException(status_code=_VALIDATION_STATUS.get(error, 400), detail=error)
 
-    # Confirmation to the applicant, after the response (never fails the request).
-    background.add_task(access_request_service.send_request_received_email, result["email"], result["first_name"])
+    # Confirmation to the applicant, after the response (never fails the request);
+    # a repeat of a request already made has had its email.
+    if not result.get("repeat"):
+        background.add_task(access_request_service.send_request_received_email, result["email"], result["first_name"])
     return {"ok": True, "id": result["id"]}
 
 

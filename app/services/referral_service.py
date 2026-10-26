@@ -64,6 +64,31 @@ def _email_already_claimed(client, email: str) -> bool:
     return invite_service._find_auth_user_by_email(client, email) is not None
 
 
+_REPEAT_MINUTES = 10
+
+
+def _recent_code_for(client, email: str) -> dict | None:
+    """A live code sent to this email in the last few minutes, shaped like
+    create_invitation_code()'s result (email_sent False: nothing new was sent)."""
+    from datetime import datetime, timedelta, timezone
+    since = (datetime.now(timezone.utc) - timedelta(minutes=_REPEAT_MINUTES)).isoformat()
+    try:
+        rows = (client.table("site_invitation_codes").select("code,expires_at,status")
+                .ilike("recipient_email", email).gte("created_at", since).order("created_at", desc=True)
+                .limit(1).execute().data)
+    except Exception:  # noqa: BLE001 — the check must never block a referral
+        return None
+    if not rows or rows[0].get("status") not in (None, "", "unused"):
+        return None
+    expires = rows[0].get("expires_at") or ""
+    try:
+        d = datetime.fromisoformat(str(expires).replace("Z", "+00:00"))
+        expires_on = f"{d.day} {d.strftime('%B %Y')}"
+    except ValueError:
+        expires_on = ""
+    return {"code": rows[0]["code"], "expires_on": expires_on, "email_sent": False, "repeat": True}
+
+
 async def create_referral(access_token: str, payload: ReferralCreateRequest) -> dict:
     client = get_supabase_admin_client()
     if client is None:
@@ -96,6 +121,15 @@ async def create_referral(access_token: str, payload: ReferralCreateRequest) -> 
 
     if _email_already_claimed(client, friend_email):
         raise ValueError("email_taken")
+
+    # A member can't send invitations without end, and the same friend invited
+    # again within a few minutes (a double submit) gets the code already sent,
+    # not a second code and a second email (2026-10-22).
+    from app.dependencies.rate_limit import limit_contact
+    limit_contact("referral-member", str(referrer["id"]), 3600, 10)
+    recent = _recent_code_for(client, friend_email)
+    if recent:
+        return recent
 
     # Named code (2026-09-29, direct spec — same format as the advisor-
     # console "Invite someone" path): friend's initials + HHMM generation
