@@ -382,13 +382,13 @@ def _request_received_email(first_name: str) -> tuple[str, str]:
           <h1 style="margin:0;font-family:{serif};font-weight:400;font-size:30px;line-height:1.25;color:#f4efe6;">We have your request</h1>
         </td></tr>
         <tr><td style="padding:30px 28px 0;">
-          <p style="margin:0 0 14px;font-family:{serif};font-size:22px;color:#f4efe6;">Dear {name},</p>
+          <p style="margin:0 0 14px;font-family:{sans};font-size:16px;line-height:1.75;color:#e6e0d6;">Dear <strong>{name}</strong>,</p>
           <p style="margin:0 0 14px;font-family:{sans};font-size:16px;line-height:1.75;color:#e6e0d6;">Thank you for asking to join TripAgent. Your request is with the Desk, and a person reads every one.</p>
           <p style="margin:0;font-family:{sans};font-size:16px;line-height:1.75;color:#e6e0d6;">If it&rsquo;s a fit, your invitation key will arrive at this address. There&rsquo;s nothing more you need to do.</p>
         </td></tr>
         <tr><td style="padding:24px 28px 28px;">
           <p style="margin:0;font-family:{sans};font-size:15px;line-height:1.7;color:#e6e0d6;">Any questions, just reply to this email.</p>
-          <p style="margin:14px 0 0;font-family:{sans};font-size:15px;color:#e6e0d6;">Warmly,<br><span style="font-family:{serif};font-size:20px;color:#f4efe6;">The TripAgent Desk</span></p>
+          <p style="margin:14px 0 0;font-family:{sans};font-size:15px;color:#e6e0d6;">Warmly,<br><strong>The TripAgent Desk</strong></p>
         </td></tr>
         <tr><td align="center" bgcolor="#1c1915" style="padding:14px 20px;background-color:#1c1915;border-top:1px solid #2e2820;border-radius:0 0 10px 10px;">
           <p style="margin:0;font-family:{sans};font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:#a89e8e;">TripAgent &middot; Private travel, personally arranged</p>
