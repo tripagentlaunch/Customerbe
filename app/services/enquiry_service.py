@@ -8,8 +8,9 @@ Phase-A investigation): enquiries has id, member_id, channel, status,
 message, detail, assigned_advisor_id, created_at. No column exists for
 name/email/phone or for the trip-shape fields the form collects
 (destination/dates/travellers/trip_type/cabin/budget) — the trip-shape
-fields are folded into `detail` as labeled text (see _format_detail), and
-the member's own free-text notes go in `message`.
+fields go in `detail` under the same keys a Tara / WhatsApp enquiry uses (see
+_format_detail, 2026-11-03; was labeled text the admin Console couldn't read),
+and the member's own free-text notes go in `message`.
 
 member_id is resolved server-side from the caller's Supabase access token
 (client.auth.get_user), then a lookup into `members` by `auth_user_id` —
@@ -76,21 +77,22 @@ def _resolve_member_id(client, access_token: str) -> str:
     return rows[0]["id"]
 
 
-def _format_detail(payload: EnquiryCreateRequest) -> str:
-    lines = []
-    if payload.destination:
-        lines.append(f"Destination: {payload.destination}")
-    if payload.dates:
-        lines.append(f"Dates: {payload.dates}")
-    if payload.travellers:
-        lines.append(f"Travellers: {payload.travellers}")
-    if payload.trip_type:
-        lines.append(f"Trip type: {payload.trip_type}")
-    if payload.cabin:
-        lines.append(f"Cabin: {payload.cabin}")
-    if payload.budget:
-        lines.append(f"Budget: {payload.budget}")
-    return "\n".join(lines) if lines else "No trip details provided."
+def _format_detail(payload: EnquiryCreateRequest) -> dict:
+    """The form's trip fields under the same keys a Tara / WhatsApp enquiry's `detail` uses
+    (destination, travel_window, travelers_count, budget_total, special_requests ...), so the
+    admin Console reads a website enquiry the same way: destination, dates, party and budget
+    fill its traveller profile and search. Values are strings, as the Console expects."""
+    fields = {
+        "source": "website_enquiry_form",
+        "destination": payload.destination,
+        "travel_window": payload.dates,
+        "travelers_count": str(payload.travellers) if payload.travellers else None,
+        "trip_type": payload.trip_type,
+        "flight_preference": payload.cabin,
+        "budget_total": payload.budget,
+        "special_requests": (payload.notes or "").strip() or None,
+    }
+    return {k: v.strip() if isinstance(v, str) else v for k, v in fields.items() if v not in (None, "")}
 
 
 def create_enquiry(access_token: str, payload: EnquiryCreateRequest) -> dict:
