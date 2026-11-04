@@ -72,9 +72,46 @@ def _resolve_member_id(client, access_token: str) -> str:
         )
     except Exception as exc:  # noqa: BLE001 - network/DB failure, not "not a member"
         raise RuntimeError(f"members lookup failed: {exc}") from exc
-    if not rows:
-        raise ValueError("not_a_member")
-    return rows[0]["id"]
+    if rows:
+        return rows[0]["id"]
+    # No CRM `members` row is linked to this login yet. That is every super-key guest (invite_service
+    # makes only their site_members row) and any signup whose CRM row was made without auth_user_id.
+    # Find the row by email and link it, or make it from their site_members details, rather than
+    # refusing the enquiry with "not_a_member".
+    try:
+        return _link_or_create_member(client, user_resp.user)
+    except Exception as exc:  # noqa: BLE001 - network/DB failure, not "not a member"
+        raise RuntimeError(f"members link failed: {exc}") from exc
+
+
+def _link_or_create_member(client, user) -> str:
+    email = (getattr(user, "email", None) or "").strip().lower()
+    site = (
+        client.table("site_members").select("name,email,phone").eq("auth_uid", user.id).limit(1).execute().data
+    )
+    site = site[0] if site else {}
+    email = email or (site.get("email") or "").strip().lower()
+
+    existing = (
+        client.table("members").select("id,auth_user_id").ilike("email", email).limit(1).execute().data if email else []
+    )
+    if existing:
+        member_id = existing[0]["id"]
+        if not existing[0].get("auth_user_id"):
+            try:
+                client.table("members").update({"auth_user_id": user.id}).eq("id", member_id).execute()
+            except Exception:  # noqa: BLE001 - linking is best-effort; the row itself is what the enquiry needs
+                _log.warning("[ENQUIRY] could not link members.auth_user_id for %s", member_id)
+        return member_id
+
+    row = {"name": site.get("name") or "Guest", "email": email or None, "phone": site.get("phone") or None}
+    try:
+        created = client.table("members").insert({**row, "auth_user_id": user.id}).execute().data
+    except Exception:  # noqa: BLE001 - e.g. no such column: the plain row still lets the enquiry through
+        created = client.table("members").insert(row).execute().data
+    if not created:
+        raise RuntimeError("members insert returned no row")
+    return created[0]["id"]
 
 
 def _format_detail(payload: EnquiryCreateRequest) -> dict:
