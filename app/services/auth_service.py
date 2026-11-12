@@ -15,6 +15,7 @@ from typing import Optional
 
 from supabase_auth.errors import AuthApiError
 
+from app.config import settings
 from app.dependencies.supabase_client import get_session_auth_client, get_supabase_admin_client
 from app.services import invite_service
 
@@ -99,8 +100,31 @@ def _find_member_with_login(client, email: str) -> Optional[dict]:
     return None
 
 
-def _sign_in_code_email_html(code: str) -> str:
+def sign_in_link(email: str, code: str) -> str:
+    """A link that opens the site with this code ready to use, so the member does not have to copy it. The email and code sit in the
+    #fragment: a fragment is never sent to any server (not ours, not a link scanner's), and it is removed from the address bar the
+    moment the page reads it. The code is still one-time and is checked by /auth/verify-otp like a typed one."""
+    from urllib.parse import quote
+
+    base = str(settings.site_base_url).rstrip("/")
+    return f"{base}/#signin&email={quote(email.strip().lower(), safe='')}&code={quote(code.strip(), safe='')}"
+
+
+def _sign_in_code_email_html(code: str, link: Optional[str] = None) -> str:
     code = html_lib.escape(code)
+    button = ""
+    if link:
+        href = html_lib.escape(link, quote=True)
+        button = (
+            '<tr><td align="center" style="padding:0 40px 8px;">'
+            '<table role="presentation" cellpadding="0" cellspacing="0" border="0"><tr>'
+            f'<td align="center" bgcolor="#6e2a38" style="background-color:#6e2a38;"><a href="{href}" '
+            'style="display:inline-block;padding:15px 40px;font-family:Arial,Helvetica,sans-serif;font-size:15px;font-weight:bold;'
+            'letter-spacing:.5px;color:#ffffff;text-decoration:none;">Sign in</a></td>'
+            '</tr></table></td></tr>'
+            '<tr><td align="center" style="padding:10px 40px 24px;font-family:Arial,Helvetica,sans-serif;font-size:12.5px;line-height:1.5;color:#7a756c;">'
+            'One tap, nothing to copy. Or use the code above.</td></tr>'
+        )
     return f"""<!doctype html>
 <html lang="en">
 <head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Your TripAgent sign-in code</title></head>
@@ -110,7 +134,9 @@ def _sign_in_code_email_html(code: str) -> str:
       <table role="presentation" width="480" cellpadding="0" cellspacing="0" border="0" style="width:480px;max-width:480px;background-color:#ffffff;">
         <tr><td style="padding:40px 40px 8px;font-family:Georgia,'Times New Roman',serif;font-size:26px;line-height:1.25;color:#1a1814;">Your sign-in code</td></tr>
         <tr><td style="padding:8px 40px 0;font-family:Arial,Helvetica,sans-serif;font-size:15px;line-height:1.6;color:#4a463f;">Enter this code on the TripAgent sign-in screen to continue.</td></tr>
-        <tr><td align="center" style="padding:28px 40px;"><div style="font-family:'Courier New',monospace;font-size:32px;letter-spacing:6px;color:#6e2a38;background-color:#f4f2ee;padding:16px 8px;">{code}</div></td></tr>
+        <tr><td align="center" style="padding:24px 40px 8px;"><div style="font-family:'Courier New',monospace;font-size:34px;font-weight:bold;letter-spacing:6px;color:#6e2a38;background-color:#f4f2ee;padding:18px 8px;-webkit-user-select:all;user-select:all;">{code}</div></td></tr>
+        <tr><td align="center" style="padding:0 40px 24px;font-family:Arial,Helvetica,sans-serif;font-size:12.5px;line-height:1.5;color:#7a756c;">To copy it: double-click the code (on a phone, press and hold it), then choose Copy.</td></tr>
+        {button}
         <tr><td style="padding:0 40px 40px;font-family:Arial,Helvetica,sans-serif;font-size:13px;line-height:1.6;color:#7a756c;">The code works once and expires shortly. If you didn't ask for it, you can ignore this email.</td></tr>
       </table>
     </td></tr>
@@ -139,11 +165,14 @@ async def send_code_ourselves(email: str, failure: str) -> dict:
             lambda: client.auth.admin.generate_link({"type": "magiclink", "email": email})
         )
         code = link.properties.email_otp
+        login_link = sign_in_link(email, code)
         await invite_service._send_via_resend(
             to_email=email,
             subject="Your TripAgent sign-in code",
-            html=_sign_in_code_email_html(code),
-            text=f"Your TripAgent sign-in code is {code}. It works once and expires shortly. If you didn't ask for it, ignore this email.",
+            html=_sign_in_code_email_html(code, login_link),
+            text=(f"Your TripAgent sign-in code is {code}. It works once and expires shortly.\n\n"
+                  f"Or open this link to sign in without copying the code: {login_link}\n\n"
+                  "If you didn't ask for it, ignore this email."),
             from_name="TripAgent Desk",
         )
     except Exception as exc:  # noqa: BLE001 - any failure here just means the fallback is unavailable

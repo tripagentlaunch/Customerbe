@@ -32,6 +32,8 @@ def test_member_gets_the_code_by_email():
     kwargs = resend.await_args.kwargs
     assert kwargs["to_email"] == "asha@example.com"
     assert "12345678" in kwargs["html"] and "12345678" in kwargs["text"]
+    link = auth_service.sign_in_link("asha@example.com", "12345678")
+    assert link.replace("&", "&amp;") in kwargs["html"] and link in kwargs["text"]   # a one-tap link as well as the code
 
 
 def test_non_member_gets_the_original_error_and_no_login_is_created():
@@ -67,6 +69,26 @@ def test_any_failure_falls_back_to_the_original_error(failing):
         resend.side_effect = RuntimeError("resend down")
     result, _ = _run(client, resend=resend)
     assert result == {"ok": False, "error": "rate_limited"}
+
+
+def test_the_sign_in_link_carries_the_code_in_the_fragment_never_the_query():
+    link = auth_service.sign_in_link(" Asha+Test@Example.com ", "12345678")
+    assert link.startswith(str(auth_service.settings.site_base_url).rstrip("/") + "/#signin&")
+    assert link.endswith("&email=asha%2Btest%40example.com&code=12345678") or "email=asha%2Btest%40example.com" in link
+    assert "?" not in link and link.count("#") == 1      # nothing a server (ours or a link scanner's) would ever receive
+
+
+def test_the_email_has_a_sign_in_button_and_tells_you_how_to_copy_the_code():
+    html = auth_service._sign_in_code_email_html("12345678", "https://site.example/#signin&email=a%40b.co&code=12345678")
+    assert 'href="https://site.example/#signin&amp;email=a%40b.co&amp;code=12345678"' in html and ">Sign in</a>" in html
+    assert "double-click the code" in html and "user-select:all" in html
+    plain = auth_service._sign_in_code_email_html("12345678")
+    assert "Sign in</a>" not in plain and "12345678" in plain          # without a link it is the code alone, as before
+
+
+def test_a_hostile_link_cannot_break_out_of_the_button():
+    html = auth_service._sign_in_code_email_html("1", 'https://x/"><script>alert(1)</script>')
+    assert "<script>" not in html and "&quot;&gt;" in html
 
 
 def test_email_shows_the_code_and_escapes_it():
