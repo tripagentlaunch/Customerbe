@@ -1,13 +1,13 @@
 from fastapi import APIRouter, Body, Depends, HTTPException, Response
 
-from app.dependencies.rate_limit import rate_limit_invite_redeem, rate_limit_super_key_location
+from app.dependencies.rate_limit import rate_limit_invite_peek, rate_limit_invite_redeem, rate_limit_super_key_location
 from app.dependencies.session_cookie import set_session_cookies
 from app.services import invite_service
 
 router = APIRouter(prefix="/invite", tags=["invite"])
 
 
-@router.get("/{code}")
+@router.get("/{code}", dependencies=[Depends(rate_limit_invite_peek)])
 async def invite_status(code: str):
     try:
         status = await invite_service.get_invite_status(code.strip().upper())

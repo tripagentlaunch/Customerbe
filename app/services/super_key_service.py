@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import logging
 import math
+from datetime import datetime, timezone
 from typing import Optional
 
 import httpx
@@ -24,13 +25,26 @@ def find_active_key(client, code: str) -> Optional[dict]:
     not created yet, a network blip) reads as "not a super key", so ordinary
     invitation codes keep working."""
     try:
-        rows = client.table("site_super_keys").select("code,label,active").eq("code", code).limit(1).execute().data
+        # select("*"): expires_at only exists once the sharing migration is applied; a named column would break every key before that.
+        rows = client.table("site_super_keys").select("*").eq("code", code).limit(1).execute().data
     except Exception as exc:  # noqa: BLE001 — never let this lookup break a normal claim
         _log.warning("[SUPER-KEY] lookup skipped: %s", exc)
         return None
-    if rows and rows[0].get("active"):
+    if rows and rows[0].get("active") and not _ended(rows[0]):
         return rows[0]
     return None
+
+
+def _ended(key: dict) -> bool:
+    """A super key with an end date stops letting people in once that time has passed."""
+    raw = key.get("expires_at")
+    if not raw:
+        return False
+    try:
+        d = datetime.fromisoformat(str(raw).replace("Z", "+00:00"))
+    except ValueError:
+        return False
+    return (d if d.tzinfo else d.replace(tzinfo=timezone.utc)) <= datetime.now(timezone.utc)
 
 
 def log_entry(client, code: str, member_id: Optional[str]) -> Optional[str]:

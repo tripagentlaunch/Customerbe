@@ -61,6 +61,16 @@ def _generate_code() -> str:
     return f"{letters()}{secrets.randbelow(10_000):04d}{letters()}"
 
 
+_CODE_BODY = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"   # no I, L, O, 0, 1: nothing to misread when a code is typed
+_CODE_LETTERS_NO_L = "ABCDEFGHJKMNPQRSTUVWXYZ"
+
+
+def _new_member_code() -> str:
+    """8 characters, two letters then six with nothing misreadable, for the code a person who joins a shared invitation gets
+    (the same shape adminbe issues on approval)."""
+    return "".join(secrets.choice(_CODE_LETTERS_NO_L) for _ in range(2)) + "".join(secrets.choice(_CODE_BODY) for _ in range(6))
+
+
 def _generate_named_code(recipient_name: str, advisor_name: str) -> str:
     """BH0325AN-style code (2026-09-29, direct spec): first 2 letters of
     the customer's name, HHMM (12-hour, no am/pm marker) of generation
@@ -293,9 +303,36 @@ async def create_invitation_code(
     }
 
 
+def _seats(row: dict) -> tuple[int, int]:
+    """(seats in all, seats taken) of a code. A plain code is 1 seat."""
+    return max(1, int(row.get("max_seats") or 1)), max(0, int(row.get("seats_used") or 0))
+
+
+def _joinable(row: dict) -> bool:
+    """A claimed shared invitation that still has a free seat: someone else can join with it."""
+    seats, used = _seats(row)
+    return row.get("status") == "redeemed" and not row.get("parent_code") and seats > 1 and used < seats
+
+
+def _ended(row: dict, now: datetime) -> bool:
+    raw = row.get("expires_at")
+    if not raw:
+        return False
+    try:
+        d = datetime.fromisoformat(str(raw).replace("Z", "+00:00"))
+    except ValueError:
+        return False
+    return (d if d.tzinfo else d.replace(tzinfo=timezone.utc)) <= now
+
+
 async def get_invite_status(code: str) -> dict:
     """Read-only peek at an invite code — does NOT consume it. 404-shaped
     dict when the code doesn't exist.
+
+    The claim page asks this when it opens from a link, so it can greet the person by first name, claim in one tap,
+    or say what is wrong (already claimed, ended) before they press anything: `firstName`, `expired`, and for a shared
+    invitation `joinable` (a seat is free, so the person is asked for their own name and email) and `seatsLeft`.
+    `used` keeps its old meaning (claimed, so sign in with email) except that a joinable invitation is not "used".
 
     ASYNC (2026-10-01, direct request): wraps the blocking Supabase SDK
     call in asyncio.to_thread so this genuinely runs off the event loop,
@@ -305,18 +342,30 @@ async def get_invite_status(code: str) -> dict:
     client = _require_client()
     rows = (
         await asyncio.to_thread(
-            client.table("site_invitation_codes").select("code,label,status,created_at").eq("code", code).execute
+            client.table("site_invitation_codes").select("*").eq("code", code).execute
         )
     ).data
     if not rows:
+        if await asyncio.to_thread(super_key_service.find_active_key, client, code):
+            return {"found": True, "code": code, "label": None, "status": "super_key", "used": False,
+                    "firstName": "", "expired": False, "joinable": False, "seatsLeft": 0, "superKey": True}
         return {"found": False}
     row = rows[0]
+    now = datetime.now(timezone.utc)
+    status = row["status"]
+    joinable = _joinable(row)
+    seats, used = _seats(row)
     return {
         "found": True,
         "code": row["code"],
         "label": row.get("label"),
-        "status": row["status"],
-        "used": row["status"] != "unused",
+        "status": status,
+        "used": status != "unused" and not joinable,
+        "firstName": ((row.get("label") or "").split() or [""])[0],
+        "expired": (status == "unused" or joinable) and _ended(row, now) or status == "expired",
+        "joinable": joinable and not _ended(row, now),
+        "seatsLeft": max(0, seats - used) if joinable else 0,
+        "superKey": False,
     }
 
 
@@ -389,14 +438,24 @@ def redeem_invite(code: str, details: Optional[dict] = None) -> dict:
     if not rows:
         return {"valid": False, "error": "not_found"}
     row = rows[0]
-    if row["status"] != "unused":
+    status = row.get("status") or "unused"
+    if status != "unused":
+        if status in ("revoked", "declined"):
+            return {"valid": False, "error": "revoked"}
+        if status == "expired":
+            return {"valid": False, "error": "expired"}
+        # A shared invitation that is claimed still lets the next person in, into a seat of their own.
+        if _joinable(row):
+            return _join_seat(client, row, details)
+        if status == "redeemed" and _seats(row)[0] > 1 and not row.get("parent_code"):
+            return {"valid": False, "error": "seats_full"}
         # A claimed code is claimed for good: it never signs anyone in again.
         # Its member signs in with their email (/auth/request-otp).
         return {"valid": False, "used": True}
     # expires_at (now+14d, set by create_invitation_code()) is what the
     # invitation email promises — enforce it here, not just display it.
     # Older rows with no expires_at stay redeemable, as before.
-    if row.get("expires_at") and datetime.fromisoformat(row["expires_at"]) <= datetime.now(timezone.utc):
+    if _ended(row, datetime.now(timezone.utc)):
         return {"valid": False, "error": "expired"}
 
     pulled =_pull_access_request_details(client, row["access_request_id"]) if row.get("access_request_id") else {}
@@ -435,17 +494,114 @@ def redeem_invite(code: str, details: Optional[dict] = None) -> dict:
     # One claim per code, decided by the database: this update matches only while
     # the code is still unused, so two screens claiming at once cannot both win.
     # Any failure below puts the code back (_release_claim).
-    claimed = client.table("site_invitation_codes").update(
-        {"status": "redeemed", "redeemed_at": now.isoformat()}
-    ).eq("code", code).eq("status", "unused").execute().data
+    claim_values = {"status": "redeemed", "redeemed_at": now.isoformat()}
+    if _seats(row)[0] > 1:
+        claim_values["seats_used"] = 1      # the approved person is the first of the seats
+    claimed = client.table("site_invitation_codes").update(claim_values).eq("code", code).eq("status", "unused").execute().data
     if not claimed:
         return {"valid": False, "used": True}
 
     try:
-        return _finish_redeem(client, code, member, email, now)
+        result = _finish_redeem(client, code, member, email, now)
     except Exception:
         _release_claim(client, code)
         raise
+    return _with_advisor(client, result, row)
+
+
+def _advisor_name(client, access_request_id) -> Optional[str]:
+    """The advisor who approved the request, so the welcome can name them. None when there is none or the lookup fails."""
+    if not access_request_id:
+        return None
+    try:
+        req = client.table("site_access_requests").select("reviewed_by").eq("id", access_request_id).limit(1).execute().data
+        by = (req or [{}])[0].get("reviewed_by")
+        if not by:
+            return None
+        adv = client.table("advisors").select("name").eq("id", by).limit(1).execute().data
+        return ((adv or [{}])[0].get("name") or "").strip() or None
+    except Exception:  # noqa: BLE001 — a name on the welcome screen is a nicety, never a reason to fail a claim
+        return None
+
+
+def _with_advisor(client, result, row: dict):
+    if isinstance(result, dict) and result.get("valid"):
+        result["advisorName"] = _advisor_name(client, row.get("access_request_id"))
+    return result
+
+
+def _release_seat(client, parent: str, child: Optional[str]) -> None:
+    """Undo a seat whose member could not be created, so the seat can be used again."""
+    try:
+        if child:
+            client.table("site_invitation_codes").delete().eq("code", child).execute()
+        cur = client.table("site_invitation_codes").select("seats_used").eq("code", parent).limit(1).execute().data or []
+        if cur:
+            client.table("site_invitation_codes").update(
+                {"seats_used": max(1, int(cur[0].get("seats_used") or 1) - 1)}
+            ).eq("code", parent).execute()
+    except Exception:  # noqa: BLE001 — the original failure is the one to surface
+        _log.exception("could not release the seat on %s", parent)
+
+
+def _join_seat(client, row: dict, details: dict) -> dict:
+    """Someone else joins a claimed shared invitation. They give their own name and email (the approved person's details
+    are not theirs), get a code of their own, and sign in. Their own code means their own chat and their own login, and a
+    seat can be taken back without touching anyone else. An email that already belongs to a member is refused: a code is no
+    proof of owning somebody else's address."""
+    now = datetime.now(timezone.utc)
+    seats, used = _seats(row)
+    if _ended(row, now):
+        return {"valid": False, "error": "expired"}
+    name = " ".join(str(details.get("name") or "").split())[:120]
+    email = str(details.get("email") or "").strip().lower()
+    if len(name) < 2 or not _EMAIL_RE.match(email):
+        return {"valid": False, "error": "needs_details", "seatsLeft": seats - used}
+    phone = None
+    if str(details.get("phone") or "").strip():
+        phone = _normalize_whatsapp(str(details["phone"]))
+        if not phone:
+            return {"valid": False, "error": "bad_whatsapp"}
+    if client.table("site_members").select("id").eq("email", email).limit(1).execute().data:
+        return {"valid": False, "error": "email_taken"}
+
+    # Take the seat first, decided by the database: this update matches only while the count is what we read.
+    taken = (client.table("site_invitation_codes").update({"seats_used": used + 1})
+             .eq("code", row["code"]).eq("seats_used", used).eq("status", "redeemed").execute().data)
+    if not taken:
+        return {"valid": False, "error": "seats_full"}
+
+    child = None
+    try:
+        for _ in range(_MAX_GENERATION_ATTEMPTS):
+            candidate = _new_member_code()
+            try:
+                client.table("site_invitation_codes").insert({
+                    "code": candidate, "label": name, "status": "redeemed", "redeemed_at": now.isoformat(),
+                    "parent_code": row["code"], "recipient_email": email, "friend_phone": phone,
+                }).execute()
+                child = candidate
+                break
+            except APIError as exc:
+                if exc.code != _POSTGRES_UNIQUE_VIOLATION:
+                    raise
+        if child is None:
+            raise RuntimeError("Could not generate a unique code for the seat")
+        member = {
+            "name": name, "email": email, "phone": phone, "city": None,
+            "plan": "invited_year", "status": "active", "source": "invitation", "invitation_code": child,
+            "member_until": (now + timedelta(days=_GRANT_DAYS)).isoformat(), "updated_at": now.isoformat(),
+            "invited_by": row.get("redeemed_by"),
+        }
+        result = _finish_redeem(client, child, member, email, now, new_email_only=True)
+    except Exception:
+        _release_seat(client, row["code"], child)
+        raise
+    if not result.get("valid"):
+        _release_seat(client, row["code"], child)
+        return result
+    result["seat"] = used + 1
+    return _with_advisor(client, result, row)
 
 
 _SUPER_KEY_EMAIL_DOMAIN = "superkey.tripagent.vip"
@@ -494,7 +650,7 @@ def _release_claim(client, code: str) -> None:
         _log.exception("could not release the claim on %s", code)
 
 
-def _finish_redeem(client, code: str, member: dict, email: Optional[str], now: datetime) -> dict:
+def _finish_redeem(client, code: str, member: dict, email: Optional[str], now: datetime, *, new_email_only: bool = False) -> dict:
     """Everything after the claim: the Auth identity, the site_members row, the session."""
     # Only an email-bearing redemption can get a real Supabase Auth
     # identity (auth requires *something* to sign in with, and this app's
@@ -533,6 +689,9 @@ def _finish_redeem(client, code: str, member: dict, email: Optional[str], now: d
             # exactly as it always has, unaffected by any of this.
             if exc.code != "email_exists":
                 raise
+            if new_email_only:
+                # A person joining a shared invitation must bring an email that is new to us: never link a stranger's login.
+                return {"valid": False, "error": "email_taken"}
             existing = _find_auth_user_by_email(client, email)
             if existing is None:
                 # Supabase just said this email exists, but the lookup
@@ -561,7 +720,7 @@ def _finish_redeem(client, code: str, member: dict, email: Optional[str], now: d
     try:
         inserted = client.table("site_members").insert(member).execute().data
     except APIError as exc:
-        if exc.code == _POSTGRES_UNIQUE_VIOLATION and email:
+        if exc.code == _POSTGRES_UNIQUE_VIOLATION and email and not new_email_only:
             # FIXED 2026-10-09: someone who is already a member (an earlier
             # code, or a second approval of the same request) entering a
             # valid code sent to their own email used to get "email_taken"

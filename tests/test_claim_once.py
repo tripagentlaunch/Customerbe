@@ -63,7 +63,7 @@ def test_code_alone_claims_as_the_approved_email(monkeypatch):
     # No email is asked for; the member is created with the email the code was issued to.
     seen = {}
     monkeypatch.setattr(invite_service, "_finish_redeem", lambda client, code, member, email, now: seen.update(email=email) or {"valid": True})
-    assert _redeem(monkeypatch, _Client(_row()), None) == {"valid": True}
+    assert _redeem(monkeypatch, _Client(_row()), None) == {"valid": True, "advisorName": None}   # the welcome names the advisor when there is one
     assert seen["email"] == "asha@example.com"
 
 

@@ -94,6 +94,12 @@ def rate_limit_invite_redeem(request: Request) -> None:
     _check(f"invite-redeem:{_client_ip(request)}", window_seconds=600, max_requests=10)
 
 
+def rate_limit_invite_peek(request: Request) -> None:
+    """The claim page's look at a code before it is claimed (it greets by first name): 30 per 10 minutes per client IP, so it
+    cannot be used to walk through codes and read names."""
+    _check(f"invite-peek:{_client_ip(request)}", window_seconds=600, max_requests=30)
+
+
 def rate_limit_super_key_location(request: Request) -> None:
     """The location report that follows a super key entry: 20 per 10 minutes per client IP."""
     _check(f"super-key-location:{_client_ip(request)}", window_seconds=600, max_requests=20)
