@@ -74,39 +74,49 @@ def test_email_shows_the_code_and_escapes_it():
     assert "<script>" not in auth_service._sign_in_code_email_html("<script>")
 
 
-# ---- the endpoint: when the fallback runs ----------------------------------
+# ---- the endpoint: our code email first, Supabase's for everyone else -----------------------------------
 
-def _post(supabase_result, fallback_result=None):
+def _post(ours_result, supabase_result=None, supabase_error=None):
     from fastapi import FastAPI
     from fastapi.testclient import TestClient
 
     from app.routers import auth_router
 
+    from app.dependencies import rate_limit
+
+    rate_limit._hits.clear()               # the per-network limit (5 / 5 min) is process-wide: each case starts clean
     app = FastAPI()
     app.include_router(auth_router.router)
-    fallback = AsyncMock(return_value=fallback_result)
+    ours = AsyncMock(return_value=ours_result)
+    supabase = MagicMock(return_value=supabase_result, side_effect=supabase_error)
     # a made-up address per call: the per-email limit is process-wide
-    email = f"t{id(fallback)}@example.com"
-    with patch.object(auth_service, "request_otp", return_value=supabase_result), patch.object(
-        auth_service, "send_code_ourselves", fallback
-    ):
+    email = f"t{id(ours)}@example.com"
+    with patch.object(auth_service, "send_code_ourselves", ours), patch.object(auth_service, "request_otp", supabase):
         res = TestClient(app).post("/auth/request-otp", json={"email": email}, headers={"X-Requested-With": "XMLHttpRequest"})
-    return res, fallback
+    return res, ours, supabase
 
 
-def test_endpoint_uses_the_fallback_when_supabase_is_rate_limited():
-    res, fallback = _post({"ok": False, "error": "rate_limited"}, {"ok": True})
+def test_an_existing_member_gets_our_code_email_and_supabase_sends_nothing():
+    res, ours, supabase = _post({"ok": True})
     assert res.json() == {"ok": True, "error": None}
-    fallback.assert_awaited_once()
+    ours.assert_awaited_once()
+    supabase.assert_not_called()          # no link-only Supabase email next to the code box
 
 
-def test_endpoint_reports_the_original_error_when_the_fallback_cannot_help():
-    res, _ = _post({"ok": False, "error": "send_failed"}, {"ok": False, "error": "send_failed"})
-    assert res.json() == {"ok": False, "error": "send_failed"}
+def test_everyone_else_goes_through_supabase_as_before():
+    for supabase_result in ({"ok": True}, {"ok": False, "error": "not_invited"}, {"ok": False, "error": "rate_limited"}):
+        res, ours, supabase = _post({"ok": False, "error": "send_failed"}, supabase_result)
+        assert res.json() == {"ok": supabase_result["ok"], "error": supabase_result.get("error")}
+        ours.assert_awaited_once()
+        supabase.assert_called_once()
 
 
-def test_endpoint_never_uses_the_fallback_for_not_invited_or_success():
-    for result in ({"ok": False, "error": "not_invited"}, {"ok": True}):
-        res, fallback = _post(result)
-        assert res.json()["ok"] is result["ok"]
-        fallback.assert_not_awaited()
+def test_when_our_email_cannot_be_sent_supabase_is_the_fallback():
+    res, _, supabase = _post({"ok": False, "error": "send_failed"}, {"ok": True})
+    assert res.json() == {"ok": True, "error": None}
+    supabase.assert_called_once()
+
+
+def test_an_unreachable_auth_service_is_a_503():
+    res, _, _ = _post({"ok": False, "error": "send_failed"}, supabase_error=RuntimeError("down"))
+    assert res.status_code == 503

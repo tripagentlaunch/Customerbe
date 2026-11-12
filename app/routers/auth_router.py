@@ -33,14 +33,17 @@ async def request_otp(payload: RequestOtpRequest):
     # Per email as well as per network (2026-10-22): 3 codes per 5 minutes.
     from app.dependencies.rate_limit import limit_contact
     limit_contact("otp-email", payload.email, 300, 3)
-    try:
-        result = auth_service.request_otp(payload.email)
-    except RuntimeError as exc:
-        _log.error("[auth] request-otp failed: %s", exc)
-        raise HTTPException(status_code=503, detail="auth service unavailable")
-    if not result["ok"] and result.get("error") in ("rate_limited", "send_failed"):
-        # Supabase would not send the email: mint the code here and send it ourselves.
-        result = await auth_service.send_code_ourselves(payload.email, result["error"])
+    # An existing member gets OUR email first: it carries the 8-digit code this site asks for, and it is not held back by Supabase's cap on
+    # auth emails. Supabase's own email is a sign-in LINK (unless its template was changed), and this site signs in by code only, so a
+    # link in the inbox next to a code box confuses everyone. Anyone else (first sign-in, no login yet) and any failure of ours go
+    # through Supabase as before, which also answers "not on the invitation list".
+    result = await auth_service.send_code_ourselves(payload.email, "send_failed")
+    if not result["ok"]:
+        try:
+            result = auth_service.request_otp(payload.email)
+        except RuntimeError as exc:
+            _log.error("[auth] request-otp failed: %s", exc)
+            raise HTTPException(status_code=503, detail="auth service unavailable")
     return RequestOtpResponse(**result)
 
 
